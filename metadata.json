@@ -1,6 +1,0 @@
-{
-  "name": "PGSStats Analyzer",
-  "description": "Client-side Pokémon GO storage analyzer and transfer triage tool for PGSStats.json exports.",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
-}
