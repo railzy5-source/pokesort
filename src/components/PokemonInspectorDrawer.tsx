@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { runWhatIfSandbox } from '../engine/battleSim';
 import { cleanSpeciesName } from '../engine/defaultConfig';
+import { getCuratedMegaInfo } from '../engine/megaCurated';
 import { Dex, moveLabel } from '../engine/pveModel';
 import type { PvPokeSpecies, ReportMon } from '../engine/types';
 import {
@@ -25,6 +26,8 @@ interface PokemonInspectorDrawerProps {
   dex?: Dex | null;
   onClose: () => void;
   onNotify: (msg: string) => void;
+  onOverrideVerdict?: (id: string, action: 'keep' | 'transfer' | 'reset') => void;
+  onCompareMon?: (mon: ReportMon) => void;
 }
 
 export const PokemonInspectorDrawer: React.FC<PokemonInspectorDrawerProps> = ({
@@ -32,6 +35,8 @@ export const PokemonInspectorDrawer: React.FC<PokemonInspectorDrawerProps> = ({
   dex,
   onClose,
   onNotify,
+  onOverrideVerdict,
+  onCompareMon,
 }) => {
   const [drawerTab, setDrawerTab] = useState<'overview' | 'sim' | 'sandbox'>('overview');
 
@@ -131,6 +136,58 @@ export const PokemonInspectorDrawer: React.FC<PokemonInspectorDrawerProps> = ({
     simCharged2,
   ]);
 
+  const formGuide = useMemo(() => {
+    if (!dex || !mon) return null;
+    const formList = (dex.byDex.get(mon.dex) || []).filter(
+      (sp) => !sp.speciesId.endsWith('_shadow') && !sp.speciesId.includes('_mega'),
+    );
+    if (formList.length <= 1) return null;
+
+    const currentFormName =
+      mon.form || (mon.species.includes('(') ? mon.species.match(/\(([^)]+)\)/)?.[1] : 'Standard Form');
+
+    const formRanks = formList.map((sp) => {
+      const glRank = dex.pvpPos.get(1500)?.get(sp.speciesId)?.[0] ?? 999;
+      const ulRank = dex.pvpPos.get(2500)?.get(sp.speciesId)?.[0] ?? 999;
+      const bestGl = glRank <= 500 ? glRank : null;
+      const bestUl = ulRank <= 500 ? ulRank : null;
+      const isCurrent = sp.speciesId === (mon.sid || '').replace(/_shadow$/, '');
+      const formLabel = sp.speciesName.includes('(') ? sp.speciesName.match(/\(([^)]+)\)/)?.[1] : 'Standard Form';
+      return {
+        sp,
+        formLabel,
+        glRank: bestGl,
+        ulRank: bestUl,
+        isCurrent,
+        score: (bestGl ? 500 - bestGl : 0) + (bestUl ? 500 - bestUl : 0),
+      };
+    });
+
+    formRanks.sort((a, b) => b.score - a.score);
+    const bestForm = formRanks[0];
+    const currentEntry = formRanks.find((f) => f.isCurrent) || formRanks[0];
+
+    return {
+      currentFormName,
+      formRanks,
+      bestForm,
+      isHoldingBest: currentEntry.sp.speciesId === bestForm.sp.speciesId,
+    };
+  }, [dex, mon]);
+
+  const megaStrategy = useMemo(() => {
+    if (!mon || mon.shadow) return null;
+    const megaType = mon.mega_type || undefined;
+    if (dex && mon.sid) {
+      const fam = dex.familyMegaInfo(mon.sid);
+      for (const cand of fam) {
+        const match = getCuratedMegaInfo(cand, megaType);
+        if (match) return match;
+      }
+    }
+    return getCuratedMegaInfo(mon.sid || '', megaType);
+  }, [dex, mon]);
+
   if (!mon) return null;
 
   const copySearch = async () => {
@@ -219,7 +276,74 @@ export const PokemonInspectorDrawer: React.FC<PokemonInspectorDrawerProps> = ({
           </div>
         </div>
 
-        <div className="p-6">
+        <div className="p-6 space-y-4">
+          {/* Feature 3: Community Day / Legacy Move Evolution Alarm */}
+          {mon.wait_cd_reason && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-xs text-amber-900 dark:text-amber-200">
+              <div className="flex items-center gap-2 font-bold">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                DO NOT EVOLVE YET! Community Day / Legacy Move Alarm
+              </div>
+              <p className="mt-1 leading-relaxed">{mon.wait_cd_reason}</p>
+            </div>
+          )}
+
+          {/* Feature 1: Manual Verdict Override ("Stop Touching My Baby") */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs dark:border-slate-800 dark:bg-slate-900/50">
+            <div>
+              <div className="font-bold text-slate-900 dark:text-slate-100">Manual Verdict Override</div>
+              <div className="text-[11px] text-slate-500">
+                {mon.manual_override === 'keep'
+                  ? 'Currently manually locked as KEEP.'
+                  : mon.manual_override === 'transfer'
+                  ? 'Currently manually forced to TRANSFER.'
+                  : 'Engine determined verdict based on PvP/Raid/Mega rules.'}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => onOverrideVerdict?.(mon.id, 'keep')}
+                className={`rounded-lg border px-2.5 py-1.5 font-semibold transition ${
+                  mon.manual_override === 'keep'
+                    ? 'border-emerald-500 bg-emerald-500 text-white'
+                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
+                }`}
+              >
+                Force Keep
+              </button>
+              <button
+                type="button"
+                onClick={() => onOverrideVerdict?.(mon.id, 'transfer')}
+                className={`rounded-lg border px-2.5 py-1.5 font-semibold transition ${
+                  mon.manual_override === 'transfer'
+                    ? 'border-rose-500 bg-rose-500 text-white'
+                    : 'border-rose-500/40 bg-rose-500/10 text-rose-700 hover:bg-rose-500/20 dark:text-rose-300'
+                }`}
+              >
+                Force Transfer
+              </button>
+              {mon.manual_override && (
+                <button
+                  type="button"
+                  onClick={() => onOverrideVerdict?.(mon.id, 'reset')}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-medium text-slate-700 hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                >
+                  Reset
+                </button>
+              )}
+              {onCompareMon && (
+                <button
+                  type="button"
+                  onClick={() => onCompareMon(mon)}
+                  className="rounded-lg border border-teal-500/40 bg-teal-500/10 px-2.5 py-1.5 font-semibold text-teal-700 hover:bg-teal-500/20 dark:text-teal-300"
+                >
+                  Compare...
+                </button>
+              )}
+            </div>
+          </div>
+
         {/* Drawer Navigation */}
         <div className="flex flex-wrap gap-1.5 border-b border-slate-200 pb-3 dark:border-slate-800">
           <button
@@ -399,6 +523,71 @@ export const PokemonInspectorDrawer: React.FC<PokemonInspectorDrawerProps> = ({
               )}
             </div>
 
+            {/* Curated Mega Strategy Card */}
+            {megaStrategy && (
+              <div className="rounded-xl border border-purple-500/35 bg-purple-500/5 p-4 text-xs dark:border-purple-500/30 dark:bg-purple-500/10">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold uppercase tracking-wider text-purple-800 dark:text-purple-300">
+                    {megaStrategy.isPrimal ? 'Primal' : 'Mega'} Raid Meta Strategy
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {megaStrategy.pokebaseTier && (
+                      <span className="rounded bg-purple-600/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-purple-800 dark:bg-purple-400/20 dark:text-purple-200">
+                        Pokébase {megaStrategy.pokebaseTier} Tier
+                      </span>
+                    )}
+                    <span className="font-mono text-[11px] font-semibold text-purple-700 dark:text-purple-300">
+                      {megaStrategy.costTier === 'expensive' ? 'Expensive Tier' : 'Cheap Tier'} · {megaStrategy.costLabel}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-1 font-display text-sm font-bold text-slate-900 dark:text-slate-100">
+                  {megaStrategy.name}
+                  {megaStrategy.highlightMove && (
+                    <span className="ml-2 font-mono text-xs font-semibold text-purple-700 dark:text-purple-300">
+                      ({megaStrategy.highlightMove})
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-slate-600 dark:text-slate-400 leading-relaxed">
+                  {megaStrategy.roleNote}
+                </p>
+              </div>
+            )}
+
+            {/* Form & Meta Recommendation Guide */}
+            {formGuide && (
+              <div className="rounded-xl border border-teal-500/40 bg-teal-500/5 p-4 text-xs dark:border-teal-500/30 dark:bg-teal-500/10">
+                <div className="flex items-center justify-between font-bold text-teal-800 dark:text-teal-300">
+                  <span>Form &amp; Meta Recommendation Guide</span>
+                  <span className="rounded bg-teal-500/20 px-2 py-0.5 text-[10px] uppercase">
+                    {formGuide.currentFormName}
+                  </span>
+                </div>
+                <p className="mt-1 text-slate-600 dark:text-slate-400">
+                  {formGuide.isHoldingBest ? (
+                    <>You are holding the <b>recommended form</b> (<span className="font-semibold">{formGuide.bestForm.formLabel}</span>) for meta battle performance!</>
+                  ) : (
+                    <>Recommended form to use: <span className="font-semibold">{formGuide.bestForm.formLabel}</span> ({formGuide.bestForm.glRank ? `Great League #${formGuide.bestForm.glRank}` : formGuide.bestForm.ulRank ? `Ultra League #${formGuide.bestForm.ulRank}` : 'Top Raid Form'}). Your current specimen is <span className="font-semibold">{formGuide.currentFormName}</span>.</>
+                  )}
+                </p>
+                <div className="mt-3 divide-y divide-teal-500/20 border-t border-teal-500/20 pt-2">
+                  {formGuide.formRanks.map((fr) => (
+                    <div key={fr.sp.speciesId} className={`flex items-center justify-between py-1.5 ${fr.isCurrent ? 'font-bold text-teal-900 dark:text-teal-100' : 'text-slate-700 dark:text-slate-300'}`}>
+                      <div className="flex items-center gap-2">
+                        <span>{fr.formLabel}</span>
+                        {fr.isCurrent && <span className="rounded bg-teal-600 px-1 py-0.2 text-[9px] uppercase text-white">Current</span>}
+                        {fr.sp.speciesId === formGuide.bestForm.sp.speciesId && <span className="rounded bg-purple-600 px-1 py-0.2 text-[9px] uppercase text-white">Best Meta</span>}
+                      </div>
+                      <div className="font-mono text-[11px] text-slate-500">
+                        {fr.glRank ? `GL #${fr.glRank}` : ''} {fr.ulRank ? `UL #${fr.ulRank}` : ''} {!fr.glRank && !fr.ulRank ? `Types: ${fr.sp.types.join('/')}` : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Shadow Purify Preview */}
             {mon.purify_preview && (
               <div
@@ -547,11 +736,16 @@ export const PokemonInspectorDrawer: React.FC<PokemonInspectorDrawerProps> = ({
                         </span>{' '}
                         <span className="text-slate-500">({p.cap})</span>
                       </div>
-                      <div className="font-mono">
-                        <span className={p.eligible ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}>
-                          Sp #{p.species_rank} · IV #{p.iv_rank}
-                          {!p.eligible && ' (Ineligible)'}
-                        </span>
+                      <div className="font-mono tabular-nums">
+                        {p.eligible ? (
+                          <span className="text-emerald-600 dark:text-emerald-400">
+                            Sp #{p.species_rank} · IV #{p.iv_rank}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 dark:text-slate-500">
+                            Sp #{p.species_rank} · {p.iv_rank < 4096 ? `IV #${p.iv_rank} (Over CP / Ineligible)` : 'Over CP / Ineligible'}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}

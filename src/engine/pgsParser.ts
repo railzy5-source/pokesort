@@ -625,7 +625,14 @@ export function ivStr(m: MonModel): string {
 }
 
 export function displaySpecies(m: MonModel): string {
-  const rawName = m.species?.speciesName || (m.raw.species as string) || `Dex ${m.dex}`;
+  let rawName = m.species?.speciesName || (m.raw.species as string) || `Dex ${m.dex}`;
+  if (!m.species && m.form_name) {
+    const fn = m.form_name.toLowerCase();
+    if (fn.includes('galar')) rawName = `${rawName} (Galarian)`;
+    else if (fn.includes('alola')) rawName = `${rawName} (Alolan)`;
+    else if (fn.includes('hisui')) rawName = `${rawName} (Hisuian)`;
+    else if (fn.includes('paldea')) rawName = `${rawName} (Paldean)`;
+  }
   let name = cleanSpeciesName(rawName);
   if (m.is_shadow && !name.toLowerCase().includes('shadow')) {
     name = `${name} (Shadow)`;

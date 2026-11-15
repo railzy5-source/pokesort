@@ -256,6 +256,8 @@ export const DEFAULT_CFG: PogoConfig = {
 
   keep_copies: 2,
   power_level_floor: 25,
+  manual_keep_ids: [],
+  manual_transfer_ids: [],
 
   pve_model: { enabled: true },
 
@@ -302,12 +304,13 @@ export const DEFAULT_CFG: PogoConfig = {
     min_iv_pct: 82.0,
     min_atk_iv: 12,
     require_released: true,
-    require_raid_relevance: false,
+    require_raid_relevance: true,
+    narrow_to_curated: true,
     min_dps_pct_of_type: 60.0,
     recommend_boost_type: true,
     top_n_for_boost: 5,
     keep_per_family: 1,
-    keep_per_type: 3,
+    keep_per_type: 2,
     require_dps_floor: true,
   },
 

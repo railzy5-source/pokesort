@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Copy, ChevronDown } from 'lucide-react';
+import { Copy, ChevronDown, Search, Zap, Check } from 'lucide-react';
 import type { ReportJson, WishlistRow } from '../engine/types';
 import {
   copyToClipboard,
@@ -1090,9 +1090,17 @@ export const PvpTab: React.FC<BattleTabProps> = ({ report, onInspectId, onNotify
 };
 
 export const MegaTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
+  const [viewMode, setViewMode] = useState<'strategy' | 'builds' | 'cycling' | 'coverage'>('strategy');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'covered' | 'ready' | 'missing'>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   const mega = report.grade?.sections?.mega;
   const opt = report.mega_optimizer;
-  if (!mega && !opt) {
+  const curatedRows = report.curated_megas || mega?.curated || [];
+  const megaBuilds = report.mons.filter((m) => m.verdict === 'BUILD_MEGA');
+
+  if (!mega && !opt && curatedRows.length === 0) {
     return (
       <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800/90 dark:bg-[#0F1B28]">
         No Mega Evolution coverage data available in this report.
@@ -1100,127 +1108,599 @@ export const MegaTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
     );
   }
 
+  const hasAnyOwned = (r: (typeof curatedRows)[number]) =>
+    r.expensive.owned || r.cheap.owned || r.alternatives.some((a) => a.owned);
+  const coveredCount = curatedRows.filter((r) => r.covered).length;
+  const readyCount = curatedRows.filter((r) => !r.covered && hasAnyOwned(r)).length;
+  const missingCount = curatedRows.filter((r) => !r.covered && !hasAnyOwned(r)).length;
+
+  const filteredCuratedRows = curatedRows.filter((row) => {
+    if (typeFilter !== 'all' && row.type !== typeFilter) return false;
+    if (statusFilter === 'covered' && !row.covered) return false;
+    if (statusFilter === 'ready' && (row.covered || !hasAnyOwned(row))) return false;
+    if (statusFilter === 'missing' && (row.covered || hasAnyOwned(row))) return false;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchType = row.displayName.toLowerCase().includes(q) || row.type.toLowerCase().includes(q);
+      const matchExp =
+        row.expensive.name.toLowerCase().includes(q) ||
+        row.expensive.roleNote.toLowerCase().includes(q) ||
+        Boolean(row.expensive.bestSpecimen?.name.toLowerCase().includes(q));
+      const matchCheap =
+        row.cheap.name.toLowerCase().includes(q) ||
+        row.cheap.roleNote.toLowerCase().includes(q) ||
+        Boolean(row.cheap.bestSpecimen?.name.toLowerCase().includes(q));
+      const matchAlt = (row.alternatives || []).some(
+        (a) =>
+          a.name.toLowerCase().includes(q) ||
+          Boolean(a.bestSpecimen?.name.toLowerCase().includes(q)),
+      );
+      if (!matchType && !matchExp && !matchCheap && !matchAlt) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="space-y-6">
+      {/* Header and Summary Bar */}
       <div>
-        <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-          Mega &amp; Primal Coverage ({mega?.covered || 0}/{mega?.total || 18} types)
-        </h1>
-        <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
-          Tracks Mega Levels 1–3 cooldown cycling toward Lv3 XL Candy boost, active timers, and type coverage.
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+            Mega &amp; Primal Roster Strategy
+          </h1>
+          <span className="text-xs font-semibold text-slate-500">
+            Narrowed to Curated Raid Meta &amp; Active Unlocks
+          </span>
+        </div>
+        <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+          Streamlined strategy split into <b>Expensive</b> (high investment / top power) and <b>Cheap</b> (100–200 energy budget) options across all 18 types. Cooldown cycling toward Lv3 XL Candy boosts.
         </p>
       </div>
 
-      {/* #9 Mega Level-3 Cycling Optimizer */}
-      {opt && (
-        <div className="space-y-4">
-          {opt.active_megas.length > 0 && (
-            <div className="rounded-xl border border-purple-500/40 bg-purple-500/8 p-4 text-xs">
-              <div className="font-bold uppercase tracking-wider text-purple-800 dark:text-purple-300">
-                Active Mega Evolution Timer
-              </div>
-              <div className="mt-2 divide-y divide-purple-500/20">
-                {opt.active_megas.map((am) => (
-                  <div key={am.id} className="flex items-center justify-between py-1.5">
-                    <button
-                      type="button"
-                      onClick={() => onInspectId(am.id)}
-                      className="font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100"
-                    >
-                      {am.mega_name} (Lv{am.mega_level})
-                    </button>
-                    <span className="font-mono font-bold text-purple-700 dark:text-purple-300 tabular-nums">
-                      {am.active_remaining_min !== null
-                        ? `${Math.floor(am.active_remaining_min / 60)}h ${am.active_remaining_min % 60}m left`
-                        : 'Active'}
-                      {am.boosts.length > 0 ? ` · Boosts ${am.boosts.join('/')}` : ''}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="grid divide-y divide-slate-200/80 rounded-xl border border-slate-200/80 bg-white sm:grid-cols-4 sm:divide-x sm:divide-y-0 dark:divide-slate-800/90 dark:border-slate-800/90 dark:bg-[#0F1B28]">
-            <div className="p-4">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Unlocked Megas
-              </div>
-              <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-100">
-                {opt.unlocked_total}
-              </div>
-            </div>
-            <div className="p-4">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Level 3 (Max XL)
-              </div>
-              <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                {opt.lv3_count}
-              </div>
-            </div>
-            <div className="p-4">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Level 2 (High)
-              </div>
-              <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-teal-600 dark:text-teal-400">
-                {opt.lv2_count}
-              </div>
-            </div>
-            <div className="p-4">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Level 1 (Base)
-              </div>
-              <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-amber-600 dark:text-amber-400">
-                {opt.lv1_count}
-              </div>
-            </div>
+      {/* 4-Stat Metric Strip */}
+      <div className="grid grid-cols-2 divide-y divide-slate-200/80 rounded-xl border border-slate-200/80 bg-white sm:grid-cols-4 sm:divide-x sm:divide-y-0 dark:divide-slate-800/90 dark:border-slate-800/90 dark:bg-[#0F1B28]">
+        <div className="p-4">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            Curated Types Covered
           </div>
+          <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {coveredCount} <span className="text-xs font-normal text-slate-400">/ 18</span>
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            {readyCount} more ready in box
+          </div>
+        </div>
+        <div className="p-4">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            Core Mega Builds
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-teal-600 dark:text-teal-400">
+            {megaBuilds.length}
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            Pruned from redundant Megas
+          </div>
+        </div>
+        <div className="p-4">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            Level 3 (Max XL)
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-purple-600 dark:text-purple-400">
+            {opt?.lv3_count || 0}
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            {opt?.lv2_count || 0} at Lv2 · {opt?.lv1_count || 0} at Lv1
+          </div>
+        </div>
+        <div className="p-4">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            Active / Cycling
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-100">
+            {opt?.active_megas.length || 0} <span className="text-xs font-normal text-slate-400">active</span>
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            {opt?.cycle_queue.length || 0} in cooldown rotation
+          </div>
+        </div>
+      </div>
 
-          {opt.cycle_queue.length > 0 && (
-            <div className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  Free-Cooldown Cycling Queue Toward Mega Level 3 ({opt.cycle_queue.length})
-                </h2>
-                <span className="text-xs text-slate-500">
-                  Lv1 → Lv2 at 7 uses · Lv2 → Lv3 at 30 uses
+      {/* Active Mega Evolution Banner */}
+      {opt && opt.active_megas.length > 0 && (
+        <div className="rounded-xl border border-purple-500/40 bg-purple-500/10 p-4 text-xs dark:border-purple-500/30">
+          <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider text-purple-900 dark:text-purple-300">
+            <Zap className="h-3.5 w-3.5" />
+            Active Mega Evolution Timer
+          </div>
+          <div className="mt-2 divide-y divide-purple-500/20">
+            {opt.active_megas.map((am) => (
+              <div key={am.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+                <button
+                  type="button"
+                  onClick={() => onInspectId(am.id)}
+                  className="font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
+                >
+                  {am.mega_name} (Lv{am.mega_level}) · CP {formatNum(am.cp)}
+                </button>
+                <span className="font-mono font-bold text-purple-800 dark:text-purple-300 tabular-nums">
+                  {am.active_remaining_min !== null
+                    ? `${Math.floor(am.active_remaining_min / 60)}h ${am.active_remaining_min % 60}m remaining`
+                    : 'Active'}
+                  {am.boosts.length > 0 ? ` · Boosts ${am.boosts.join('/')}` : ''}
                 </span>
               </div>
-              <div className="divide-y divide-slate-100 text-xs dark:divide-slate-800">
-                {opt.cycle_queue.slice(0, 12).map((mq) => (
-                  <div key={mq.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                    <div>
-                      <button
-                        type="button"
-                        onClick={() => onInspectId(mq.id)}
-                        className="font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
-                      >
-                        {mq.mega_name}
-                      </button>{' '}
-                      <span className="font-mono text-slate-500 tabular-nums">
-                        CP {formatNum(mq.cp)} · {mq.iv} ({mq.iv_pct}%)
-                      </span>
-                      {mq.boosts.length > 0 && (
-                        <span className="ml-2 capitalize text-slate-500">
-                          · {mq.boosts.join('/')}
-                        </span>
-                      )}
-                    </div>
-                    <div className="font-mono font-semibold tabular-nums text-purple-700 dark:text-purple-300">
-                      Lv{mq.mega_level} → Lv{mq.next_level} ({mq.points_to_next} free Mega{' '}
-                      {mq.points_to_next === 1 ? 'use' : 'uses'} left)
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
 
-      {/* Uniform 6-col coverage grid */}
-      {mega && (
-        <>
+      {/* Navigation & View Mode Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 pb-3 dark:border-slate-800/90">
+        <div className="inline-flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+          <button
+            type="button"
+            onClick={() => setViewMode('strategy')}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+              viewMode === 'strategy'
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-900 dark:text-white'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+            }`}
+          >
+            🎯 Meta Strategy (Expensive vs Cheap)
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('builds')}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+              viewMode === 'builds'
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-900 dark:text-white'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+            }`}
+          >
+            ⚔️ My Mega Builds ({megaBuilds.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('cycling')}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+              viewMode === 'cycling'
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-900 dark:text-white'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+            }`}
+          >
+            ⏱️ Cooldown Queue ({opt?.cycle_queue.length || 0})
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('coverage')}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+              viewMode === 'coverage'
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-900 dark:text-white'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+            }`}
+          >
+            📊 Type Grid ({mega?.types.length || 18})
+          </button>
+        </div>
+
+        {viewMode === 'strategy' && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filter Pokémon or moves..."
+                className="h-8 rounded-lg border border-slate-200 bg-white pl-8 pr-3 text-xs text-slate-800 placeholder-slate-400 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              />
+            </div>
+            <div className="inline-flex rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`rounded px-2 py-1 font-medium transition-colors ${statusFilter === 'all' ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-900 dark:text-white' : 'text-slate-500'}`}
+              >
+                All (18)
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('covered')}
+                className={`rounded px-2 py-1 font-medium transition-colors ${statusFilter === 'covered' ? 'bg-white text-emerald-700 shadow-xs dark:bg-slate-900 dark:text-emerald-400' : 'text-slate-500'}`}
+              >
+                Covered ({coveredCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('ready')}
+                className={`rounded px-2 py-1 font-medium transition-colors ${statusFilter === 'ready' ? 'bg-white text-teal-700 shadow-xs dark:bg-slate-900 dark:text-teal-400' : 'text-slate-500'}`}
+              >
+                Ready in Box ({readyCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('missing')}
+                className={`rounded px-2 py-1 font-medium transition-colors ${statusFilter === 'missing' ? 'bg-white text-amber-700 shadow-xs dark:bg-slate-900 dark:text-amber-400' : 'text-slate-500'}`}
+              >
+                Need Base ({missingCount})
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* VIEW 1: CURATED EXPENSIVE VS CHEAP STRATEGY MATRIX */}
+      {viewMode === 'strategy' && (
+        <div className="space-y-4">
+          {/* Quick type chips */}
+          <div className="flex flex-wrap items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+            <button
+              type="button"
+              onClick={() => setTypeFilter('all')}
+              className={`rounded-lg px-2.5 py-1 font-medium transition-colors whitespace-nowrap ${
+                typeFilter === 'all'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-bold'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+            >
+              All Types
+            </button>
+            {curatedRows.map((r) => (
+              <button
+                key={r.type}
+                type="button"
+                onClick={() => setTypeFilter(r.type)}
+                className={`flex items-center gap-1 rounded-lg px-2.5 py-1 font-medium transition-colors whitespace-nowrap ${
+                  typeFilter === r.type
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-bold'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                }`}
+              >
+                <span>{r.icon}</span>
+                <span className="capitalize">{r.displayName}</span>
+                {r.covered && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+              </button>
+            ))}
+          </div>
+
+          {/* Cards for each type */}
+          <div className="space-y-4">
+            {filteredCuratedRows.map((row) => (
+              <div
+                key={row.type}
+                className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]"
+              >
+                {/* Type Header */}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3 dark:border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-3 w-3 shrink-0 rounded-full"
+                      style={{ backgroundColor: TYPE_COLORS[row.type] || '#64748b' }}
+                    />
+                    <span className="text-lg">{row.icon}</span>
+                    <h2 className="font-display text-lg font-bold text-slate-900 dark:text-slate-100 capitalize">
+                      {row.displayName} Type Mega Strategy
+                    </h2>
+                  </div>
+                  <div>
+                    {row.covered ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                        <Check className="h-3.5 w-3.5" />
+                        Unlocked &amp; Covered
+                      </span>
+                    ) : row.expensive.owned || row.cheap.owned || row.alternatives.some((a) => a.owned) ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 dark:text-teal-400">
+                        <Zap className="h-3.5 w-3.5" />
+                        In Box (Ready to Mega)
+                      </span>
+                    ) : (
+                      <span className="text-xs font-medium text-slate-400 dark:text-slate-500">
+                        ○ Need Mega Base
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2-Column Grid: Expensive vs Cheap */}
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {/* EXPENSIVE OPTION */}
+                  <div className="flex flex-col justify-between rounded-lg border border-slate-200/80 bg-slate-50/50 p-4 dark:border-slate-800/80 dark:bg-slate-900/30">
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold tracking-wider text-amber-700 uppercase dark:text-amber-400">
+                            Expensive Option
+                          </span>
+                          {row.expensive.pokebaseTier && (
+                            <span className="rounded bg-purple-600/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-purple-800 dark:bg-purple-400/20 dark:text-purple-200">
+                              {row.expensive.pokebaseTier} Tier
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-mono text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                          {row.expensive.costLabel}
+                        </span>
+                      </div>
+                      <div className="mt-1 font-display text-base font-bold text-slate-900 dark:text-slate-100">
+                        {row.expensive.name}
+                      </div>
+                      {row.expensive.highlightMove && (
+                        <div className="mt-0.5 font-mono text-xs font-semibold text-purple-700 dark:text-purple-300">
+                          Move: {row.expensive.highlightMove}
+                        </div>
+                      )}
+                      <p className="mt-1.5 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+                        {row.expensive.roleNote}
+                      </p>
+                    </div>
+
+                    {/* Ownership status */}
+                    <div className="mt-3">
+                      {row.expensive.unlocked && row.expensive.bestSpecimen ? (
+                        <button
+                          type="button"
+                          onClick={() => onInspectId(row.expensive.bestSpecimen!.id)}
+                          className="w-full rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-2.5 text-left transition-colors hover:border-emerald-500"
+                        >
+                          <div className="flex items-center justify-between text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                            <span>Mega Lv{row.expensive.bestSpecimen.mega_level} Unlocked</span>
+                            <span className="text-[10px] uppercase font-semibold">Inspect ➔</span>
+                          </div>
+                          <div className="mt-0.5 font-mono text-[11px] text-emerald-700 dark:text-emerald-400 tabular-nums">
+                            {row.expensive.bestSpecimen.name} · CP {formatNum(row.expensive.bestSpecimen.cp)} · IV {row.expensive.bestSpecimen.iv} ({row.expensive.bestSpecimen.iv_pct}%)
+                          </div>
+                        </button>
+                      ) : row.expensive.owned && row.expensive.bestSpecimen ? (
+                        <button
+                          type="button"
+                          onClick={() => onInspectId(row.expensive.bestSpecimen!.id)}
+                          className="w-full rounded-lg border border-teal-500/40 bg-teal-500/10 p-2.5 text-left transition-colors hover:border-teal-500"
+                        >
+                          <div className="flex items-center justify-between text-xs font-bold text-teal-800 dark:text-teal-300">
+                            <span>
+                              {row.expensive.bestSpecimen.is_pre_evo
+                                ? 'Pre-Evolution Owned (Ready to Evolve)'
+                                : 'Candidate in Box'}
+                            </span>
+                            <span className="text-[10px] uppercase font-semibold">Inspect ➔</span>
+                          </div>
+                          <div className="mt-0.5 font-mono text-[11px] text-teal-700 dark:text-teal-400 tabular-nums">
+                            {row.expensive.bestSpecimen.name} · CP {formatNum(row.expensive.bestSpecimen.cp)} · IV {row.expensive.bestSpecimen.iv} ({row.expensive.bestSpecimen.iv_pct}%)
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-slate-200 p-2 text-center text-[11px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
+                          Not currently in box · Hunt in raids or events
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* CHEAP OPTION */}
+                  <div className="flex flex-col justify-between rounded-lg border border-slate-200/80 bg-slate-50/50 p-4 dark:border-slate-800/80 dark:bg-slate-900/30">
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold tracking-wider text-teal-700 uppercase dark:text-teal-400">
+                            Cheap Option
+                          </span>
+                          {row.cheap.pokebaseTier && (
+                            <span className="rounded bg-purple-600/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-purple-800 dark:bg-purple-400/20 dark:text-purple-200">
+                              {row.cheap.pokebaseTier} Tier
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-mono text-[11px] font-semibold text-teal-800 dark:text-teal-300">
+                          {row.cheap.costLabel}
+                        </span>
+                      </div>
+                      <div className="mt-1 font-display text-base font-bold text-slate-900 dark:text-slate-100">
+                        {row.cheap.name}
+                      </div>
+                      {row.cheap.highlightMove && (
+                        <div className="mt-0.5 font-mono text-xs font-semibold text-purple-700 dark:text-purple-300">
+                          Move: {row.cheap.highlightMove}
+                        </div>
+                      )}
+                      <p className="mt-1.5 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+                        {row.cheap.roleNote}
+                      </p>
+                    </div>
+
+                    {/* Ownership status */}
+                    <div className="mt-3">
+                      {row.cheap.unlocked && row.cheap.bestSpecimen ? (
+                        <button
+                          type="button"
+                          onClick={() => onInspectId(row.cheap.bestSpecimen!.id)}
+                          className="w-full rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-2.5 text-left transition-colors hover:border-emerald-500"
+                        >
+                          <div className="flex items-center justify-between text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                            <span>Mega Lv{row.cheap.bestSpecimen.mega_level} Unlocked</span>
+                            <span className="text-[10px] uppercase font-semibold">Inspect ➔</span>
+                          </div>
+                          <div className="mt-0.5 font-mono text-[11px] text-emerald-700 dark:text-emerald-400 tabular-nums">
+                            {row.cheap.bestSpecimen.name} · CP {formatNum(row.cheap.bestSpecimen.cp)} · IV {row.cheap.bestSpecimen.iv} ({row.cheap.bestSpecimen.iv_pct}%)
+                          </div>
+                        </button>
+                      ) : row.cheap.owned && row.cheap.bestSpecimen ? (
+                        <button
+                          type="button"
+                          onClick={() => onInspectId(row.cheap.bestSpecimen!.id)}
+                          className="w-full rounded-lg border border-teal-500/40 bg-teal-500/10 p-2.5 text-left transition-colors hover:border-teal-500"
+                        >
+                          <div className="flex items-center justify-between text-xs font-bold text-teal-800 dark:text-teal-300">
+                            <span>
+                              {row.cheap.bestSpecimen.is_pre_evo
+                                ? 'Pre-Evolution Owned (Ready to Evolve)'
+                                : 'Candidate in Box'}
+                            </span>
+                            <span className="text-[10px] uppercase font-semibold">Inspect ➔</span>
+                          </div>
+                          <div className="mt-0.5 font-mono text-[11px] text-teal-700 dark:text-teal-400 tabular-nums">
+                            {row.cheap.bestSpecimen.name} · CP {formatNum(row.cheap.bestSpecimen.cp)} · IV {row.cheap.bestSpecimen.iv} ({row.cheap.bestSpecimen.iv_pct}%)
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-slate-200 p-2 text-center text-[11px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
+                          Not currently in box · Hunt in raids or events
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Alternatives row */}
+                {row.alternatives && row.alternatives.length > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2 text-xs dark:border-slate-800">
+                    <span className="font-semibold text-slate-500">Notable Alternatives:</span>
+                    {row.alternatives.map((alt) => (
+                      <span key={alt.sid} className="inline-flex flex-wrap items-center gap-1.5">
+                        {alt.bestSpecimen ? (
+                          <button
+                            type="button"
+                            onClick={() => onInspectId(alt.bestSpecimen!.id)}
+                            className={`font-medium underline decoration-slate-300 hover:text-teal-600 dark:decoration-slate-700 ${
+                              alt.fallbackActive
+                                ? 'font-semibold text-teal-700 dark:text-teal-300'
+                                : 'text-slate-800 dark:text-slate-200'
+                            }`}
+                          >
+                            {alt.name}
+                            {alt.pokebaseTier ? ` [${alt.pokebaseTier}]` : ''} ({alt.costLabel}) ·{' '}
+                            {alt.bestSpecimen.iv_pct}%
+                          </button>
+                        ) : (
+                          <span className="text-slate-400 dark:text-slate-500">
+                            {alt.name}
+                            {alt.pokebaseTier ? ` [${alt.pokebaseTier}]` : ''} ({alt.costLabel})
+                          </span>
+                        )}
+                        {alt.fallbackActive && (
+                          <span className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-bold text-teal-800 dark:text-teal-300">
+                            Active Fallback (Covers missing {!row.cheap.owned ? row.cheap.name : row.expensive.name})
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {filteredCuratedRows.length === 0 && (
+              <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800/90 dark:bg-[#0F1B28]">
+                No Mega types match the current filter.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* VIEW 2: MY MEGA BUILDS (PRUNED CORE PICKS) */}
+      {viewMode === 'builds' && (
+        <div className="space-y-4">
+          <div className="text-xs text-slate-500">
+            Showing {megaBuilds.length} high-value Mega builds prioritized for your account. Redundant and weak un-unlocked Megas have been pruned so they won't clog your Build Plan.
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {megaBuilds.map((m) => (
+              <div
+                key={m.id}
+                className="rounded-xl border border-slate-200/80 bg-white p-4 dark:border-slate-800/90 dark:bg-[#0F1B28]"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onInspectId(m.id)}
+                    className="text-left font-display text-base font-bold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
+                  >
+                    {m.species}
+                  </button>
+                  {m.flags.some((f) => f.startsWith('Mega Lv')) && (
+                    <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-800 dark:bg-purple-900/40 dark:text-purple-300">
+                      Unlocked
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 font-mono text-xs text-slate-500 tabular-nums">
+                  CP {formatNum(m.cp)} · IV {m.iv} ({m.iv_pct}%)
+                  {m.power_up_to ? ` · Power-up ➔ L${m.power_up_to}` : ''}
+                </div>
+                <div className="mt-2 text-xs font-semibold text-teal-700 dark:text-teal-400">
+                  {m.role}
+                </div>
+                <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                  {m.why}
+                </div>
+                {m.moveset && (
+                  <div className="mt-2 font-mono text-[11px] text-slate-500">
+                    Recommended Moves: {m.moveset}
+                  </div>
+                )}
+              </div>
+            ))}
+            {megaBuilds.length === 0 && (
+              <div className="col-span-full rounded-xl border border-slate-200/80 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800/90 dark:bg-[#0F1B28]">
+                No Mega build candidates currently assigned.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* VIEW 3: COOLDOWN CYCLING QUEUE */}
+      {viewMode === 'cycling' && opt && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                Free-Cooldown Cycling Queue Toward Mega Level 3 ({opt.cycle_queue.length})
+              </h2>
+              <span className="text-xs text-slate-500">
+                Lv1 → Lv2 at 7 uses · Lv2 → Lv3 at 30 uses (Max XL Candy Bonus)
+              </span>
+            </div>
+            <div className="divide-y divide-slate-100 text-xs dark:divide-slate-800">
+              {opt.cycle_queue.map((mq) => (
+                <div key={mq.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => onInspectId(mq.id)}
+                      className="font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
+                    >
+                      {mq.mega_name}
+                    </button>{' '}
+                    <span className="font-mono text-slate-500 tabular-nums">
+                      CP {formatNum(mq.cp)} · {mq.iv} ({mq.iv_pct}%)
+                    </span>
+                    {mq.boosts.length > 0 && (
+                      <span className="ml-2 capitalize text-slate-500">
+                        · Boosts {mq.boosts.join('/')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="font-mono font-semibold tabular-nums text-purple-700 dark:text-purple-300">
+                    Lv{mq.mega_level} → Lv{mq.next_level} ({mq.points_to_next} free Mega{' '}
+                    {mq.points_to_next === 1 ? 'use' : 'uses'} left)
+                  </div>
+                </div>
+              ))}
+              {opt.cycle_queue.length === 0 && (
+                <div className="py-6 text-center text-slate-400">
+                  No unlocked Megas in cooldown queue.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW 4: FULL TYPE COVERAGE GRID */}
+      {viewMode === 'coverage' && mega && (
+        <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-6">
             {mega.types.map((t) => (
               <div
@@ -1268,13 +1748,8 @@ export const MegaTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
                 )}
               </div>
             ))}
-            {mega.priority.length === 0 && (
-              <div className="col-span-full rounded-xl border border-slate-200/80 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800/90 dark:bg-[#0F1B28]">
-                No Mega candidates in your box yet.
-              </div>
-            )}
           </div>
-        </>
+        </div>
       )}
     </div>
   );

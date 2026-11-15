@@ -293,6 +293,76 @@ export function buildMegaOptimizer(
       b.cp - a.cp,
   );
 
+  // Feature 8: "Walk This for Free Mega Energy" Buddy Shortcut
+  const unlockedFamilies = new Map<number, { megaName: string; megaLevel: number; bestScore: number }>();
+  for (const m of mons) {
+    if (!m.has_mega_unlocked) continue;
+    const famRoot = m.dex;
+    const megaName = m.mega_sid
+      ? cleanSpeciesName(dex.byId.get(m.mega_sid)?.speciesName || m.mega_sid)
+      : `Mega ${displaySpecies(m)}`;
+    const cur = unlockedFamilies.get(famRoot);
+    const score = m.mega_level < 3 ? 100 + m.mega_level * 10 : 10;
+    if (!cur || score > cur.bestScore) {
+      unlockedFamilies.set(famRoot, { megaName, megaLevel: Math.max(1, m.mega_level), bestScore: score });
+    }
+  }
+
+  const walkByFamily = new Map<number, { score: number; target: NonNullable<MegaOptimizerData['walk_for_energy']>[number] }>();
+  for (const m of mons) {
+    if (m.verdict === 'TRANSFER' || m.verdict === 'TRADE' || m.verdict === 'REVIEW') continue;
+    const sid = m.species?.speciesId || '';
+    const famRoot = m.dex;
+    const famInfo = unlockedFamilies.get(famRoot);
+    if (!famInfo && !m.has_mega_unlocked) continue;
+
+    const buddyKm = Math.max(
+      1,
+      Number(
+        m.species?.buddyDistance ||
+          (m.species?.tags?.some((t) => ['legendary', 'mythical', 'ultrabeast'].includes(t)) ? 20 : 5),
+      ),
+    );
+    const energyPerCandy = buddyKm * 5;
+    const poffinKm = Math.round((buddyKm / 2) * 10) / 10;
+    const megaName = m.mega_sid
+      ? cleanSpeciesName(dex.byId.get(m.mega_sid)?.speciesName || m.mega_sid)
+      : famInfo?.megaName || `Mega ${displaySpecies(m)}`;
+    const mlvl = Math.max(0, m.mega_level || 0);
+    let score = m.iv_pct * 0.25 + (25 - Math.min(20, buddyKm)) * 2;
+    if (m.has_mega_unlocked && mlvl < 3) score += 60;
+    else if (m.verdict === 'BUILD_MEGA') score += 45;
+    if (m.verdict === 'BUILD_PVP' || m.verdict === 'BUILD_RAID') score += 15;
+
+    const reason =
+      m.has_mega_unlocked && mlvl < 3
+        ? `Walk ${buddyKm}km (${poffinKm}km w/ Poffin) for +${energyPerCandy} Mega Energy + speed up Lv${mlvl} → Lv3.`
+        : `Family Mega unlocked — walking any copy earns +${energyPerCandy} Mega Energy per ${buddyKm}km candy.`;
+
+    const candidate = {
+      id: m.uid,
+      species: displaySpecies(m),
+      mega_name: megaName,
+      cp: m.cp,
+      iv_pct: m.iv_pct,
+      mega_level: mlvl,
+      buddy_km: buddyKm,
+      poffin_km: poffinKm,
+      energy_per_candy: energyPerCandy,
+      reason,
+      search: ingameSearch(m, m.species?.speciesName || String(m.dex)),
+    };
+    const prev = walkByFamily.get(famRoot);
+    if (!prev || score > prev.score) {
+      walkByFamily.set(famRoot, { score, target: candidate });
+    }
+  }
+
+  const walk_for_energy = Array.from(walkByFamily.values())
+    .sort((a, b) => a.target.buddy_km - b.target.buddy_km || b.score - a.score)
+    .slice(0, 15)
+    .map((x) => x.target);
+
   return {
     unlocked_total: lv1 + lv2 + lv3,
     lv1_count: lv1,
@@ -300,6 +370,7 @@ export function buildMegaOptimizer(
     lv3_count: lv3,
     active_megas,
     cycle_queue: cycle_queue.slice(0, 30),
+    walk_for_energy,
   };
 }
 

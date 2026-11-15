@@ -5,6 +5,7 @@ import {
   getActiveLeaguesAndCups,
 } from './defaultConfig';
 import { loadRemoteGameData } from './gameDataClient';
+import { isCuratedMega } from './megaCurated';
 import { buildOfflineFallbackData } from './offlineFallback';
 import {
   applyVariantRules,
@@ -97,15 +98,21 @@ export function analyzePgsExport(
       const famMegas = dex.familyMegaInfo(m.species.speciesId);
       if (famMegas.length > 0) {
         m.is_mega_capable = true;
-        // B:1 — Select X (form=2) vs Y (form=3) Mega form if recorded on this specimen
-        let chosenMega = famMegas[0];
-        if (famMegas.length > 1 && m.mega_forms.length > 0) {
-          const hasX = m.mega_forms.includes(2);
-          const hasY = m.mega_forms.includes(3);
+        // B:1 — Select X (form=2) vs Y (form=3) Mega form if recorded on this specimen;
+        // otherwise prefer a curated primary Mega (e.g. raichu_mega_y, charizard_mega_y, mewtwo_mega_y).
+        let chosenMega = famMegas.find((id) => isCuratedMega(id)) || famMegas[0];
+        if (famMegas.length > 1) {
           const megaX = famMegas.find((id) => id.endsWith('_mega_x'));
           const megaY = famMegas.find((id) => id.endsWith('_mega_y'));
-          if (hasY && !hasX && megaY) chosenMega = megaY;
-          else if (hasX && !hasY && megaX) chosenMega = megaX;
+          if (m.mega_forms.length > 0) {
+            const hasX = m.mega_forms.includes(2);
+            const hasY = m.mega_forms.includes(3);
+            if (hasY && !hasX && megaY) chosenMega = megaY;
+            else if (hasX && !hasY && megaX) chosenMega = megaX;
+            else if (megaY && isCuratedMega(megaY)) chosenMega = megaY;
+          } else if (megaY && isCuratedMega(megaY)) {
+            chosenMega = megaY;
+          }
         }
         m.mega_sid = chosenMega;
         m.is_mega_pre_evo = !dex.megaBases.has(m.species.speciesId);

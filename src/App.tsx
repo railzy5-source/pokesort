@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { ItemsGymsTab, MedalsXpTab } from './components/AccountHubTabs';
 import { MaxTab, MegaTab, PvpTab, RaidTab, WishlistTab } from './components/BattleTabs';
+import { GymDefenderTab } from './components/GymDefenderTab';
 import { BottleCapTab } from './components/BottleCapTab';
 import {
   AllMonsTab,
@@ -96,6 +97,7 @@ const NAV_GROUPS: { id: NavGroupId; label: string; tabs: NavTabDef[] }[] = [
       { key: 'pvp', label: 'PvP Leagues', icon: Swords },
       { key: 'mega', label: 'Mega Coverage', icon: Sparkles },
       { key: 'wish', label: 'Wishlist', icon: BookmarkCheck },
+      { key: 'defenders', label: 'Gym Defenders', icon: Award },
     ],
   },
   {
@@ -653,6 +655,13 @@ export default function App() {
               )}
               {activeTab === 'wish' && (
                 <WishlistTab report={report} onInspectId={handleInspectId} />
+              )}
+              {activeTab === 'defenders' && (
+                <GymDefenderTab
+                  report={report}
+                  onInspectId={handleInspectId}
+                  onNotify={notify}
+                />
               )}
               {activeTab === 'raid' && (
                 <RaidTab report={report} onInspectId={handleInspectId} />

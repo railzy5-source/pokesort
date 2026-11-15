@@ -38,6 +38,7 @@ import {
   buildBottleCapRecommendations,
   buildBuddyTracker,
   buildMassTransferChunks,
+  buildSafeSearchChunks,
   buildTagAudit,
   buildTradeMatcher,
   evaluateBuildReadiness,
@@ -57,15 +58,18 @@ import {
   buildOriginProtectionSummary,
   buildXpLevelPlan,
 } from './accountHub';
+import { buildCuratedMegaStatus, type CuratedMegaTypeRow } from './megaCurated';
 import {
   currentMoves,
   Dex,
   estimatedMegaDps,
   estimatedRaidDps,
   maxMoveGainPct,
+  moveIdent,
   moveLabel,
   movesNeeded,
   pickRaidMoveset,
+  raidMovesetCandidates,
   readinessFields,
   readinessSummary,
   refDps,
@@ -81,6 +85,7 @@ import type {
   BriefingEventItem,
   BuddyTrackerData,
   CupDef,
+  EliteTmRoiItem,
   EvolveItem,
   GradeComponent,
   HoldBucket,
@@ -100,6 +105,7 @@ import type {
   ReportJson,
   ReportMon,
   ReviewTriageItem,
+  SafeTransferBatch,
   ShowcaseRow,
   TeamCohesion,
   TeamCohesionHole,
@@ -1022,13 +1028,113 @@ export function buildTransferBlock(mons: MonModel[], cfg: PogoConfig): ReportJso
 
   const mass_search_chunks = buildMassTransferChunks(transferMons, collisions, mons);
 
+  // Features 2 & 10: Mutually Exclusive Safe Mass-Nuke Batches + 2x Transfer Candy Bin
+  const RARE_CANDY_HOLD_DEX = new Set([
+    113, 143, 147, 148, 149, 242, 246, 247, 248, 371, 372, 373, 374, 375, 376,
+    440, 443, 444, 445, 446, 447, 448, 610, 611, 612, 633, 634, 635, 636, 637,
+    704, 705, 706, 782, 783, 784, 808, 809, 885, 886, 887, 996, 997, 998,
+  ]);
+  const isDoubleCandyTarget = (m: MonModel) =>
+    Boolean(
+      m.species?.tags?.some((t) => t === 'legendary' || t === 'ultrabeast' || t === 'mythical') ||
+        RARE_CANDY_HOLD_DEX.has(m.dex),
+    );
+
+  const waitDoubleCandyMons: MonModel[] = [];
+  const commonJunkMons: MonModel[] = [];
+  const redundantDupeMons: MonModel[] = [];
+
+  for (const m of transferMons) {
+    if (isDoubleCandyTarget(m)) {
+      waitDoubleCandyMons.push(m);
+    } else if (
+      !m.is_shadow &&
+      m.iv_pct < 67 &&
+      m.level < 30 &&
+      !(m.year !== null && m.year <= 2019) &&
+      !m.has_third_move &&
+      m.battles_attacked + m.battles_defended < 5
+    ) {
+      commonJunkMons.push(m);
+    } else {
+      redundantDupeMons.push(m);
+    }
+  }
+
+  const STD_SAFE_GUARD =
+    '!shiny&!lucky&!xxl&!xxs&!favorite&!4*&!dynamax&!gigantamax&!background&!#trade';
+  const DOUBLE_CANDY_GUARD = '!shiny&!lucky&!4*&!favorite&!background';
+
+  const topSpeciesSummary = (list: MonModel[]): string[] => {
+    const counts = new Map<string, number>();
+    for (const m of list) {
+      const nm = m.species ? cleanSpeciesName(m.species.speciesName) : `Dex #${m.dex}`;
+      counts.set(nm, (counts.get(nm) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 5)
+      .map(([nm, n]) => `${nm} (${n})`);
+  };
+
+  const makeBatch = (
+    key: SafeTransferBatch['key'],
+    title: string,
+    subtitle: string,
+    safety_note: string,
+    list: MonModel[],
+    guard: string,
+  ): SafeTransferBatch => {
+    const batchChunks = buildSafeSearchChunks(list, mons, guard, 1950);
+    const covered = batchChunks.reduce((s, c) => s + c.count, 0);
+    return {
+      key,
+      title,
+      subtitle,
+      total: list.length,
+      safety_note,
+      chunks: batchChunks,
+      excluded_collisions: Math.max(0, list.length - covered),
+      sample_species: topSpeciesSummary(list),
+    };
+  };
+
+  const safe_batches: SafeTransferBatch[] = [
+    makeBatch(
+      'common_junk',
+      'Batch 1 · Zero-Regret 0★/1★ Trash',
+      'Low IV (<67%), under Level 30, non-Shadow, non-legacy catches safe to grind right away.',
+      'Guarded against Shiny, Lucky, 4★, XXL/XXS, Favorite, Dynamax, Background, and #trade.',
+      commonJunkMons,
+      STD_SAFE_GUARD,
+    ),
+    makeBatch(
+      'wait_double_candy',
+      'Batch 2 · Hold for 2× Transfer Candy Tuesday',
+      'Surplus Legendaries, Ultra Beasts, Meltan & pseudo-legendary/rare XL families worth saving for 2× Candy Spotlight Hour.',
+      'Tag #2xCandy now and transfer together during the next 2× Transfer Candy hour (note: turn on Expanded Group Transfer in Settings for Legendaries).',
+      waitDoubleCandyMons,
+      DOUBLE_CANDY_GUARD,
+    ),
+    makeBatch(
+      'redundant_dupes',
+      'Batch 3 · Redundant High-IV & Surplus Dupes',
+      'Spare L30+, Shadows, and surplus mid/high-IV copies where you already hold strictly stronger specimens.',
+      'Always double-check Last Look below before mass transferring high-level or Shadow dupes.',
+      redundantDupeMons,
+      STD_SAFE_GUARD,
+    ),
+  ];
+
   return {
     protected: protectedCount,
     total: transferMons.length,
+    double_candy_count: waitDoubleCandyMons.length,
     groups,
     last_look: lastLook.slice(0, 60),
     collisions,
     mass_search_chunks,
+    safe_batches,
     review_triage: {
       enabled: triageCfg.enabled !== false,
       probably_keep,
@@ -1386,6 +1492,7 @@ export function computeGradeAndDetails(
   megaSection: { priority: MegaPriorityEntry[]; boost: MegaBoostEntry[] },
   coverage: ReportJson['coverage'],
   bagResources?: BagResources,
+  curatedMegas?: CuratedMegaTypeRow[],
 ): ReportJson['grade'] {
   let raidWeightSum = 0;
   let raidWeighted = 0;
@@ -1642,6 +1749,7 @@ export function computeGradeAndDetails(
     covered: coveredMegaTypes.size,
     total: RAID_USEFUL_TYPES.length,
     priority: megaSection.priority,
+    curated: curatedMegas,
     types: RAID_USEFUL_TYPES.map((t) => {
       const forms = megaSection.priority
         .filter((p) => p.tags.some((tg) => tg.includes(t)))
@@ -1851,6 +1959,99 @@ export function computeGradeAndDetails(
     (r) => r.verdict !== 'BUILD_PVP' && r.build_status === 'Needs Elite TM',
   ).length;
 
+  // Feature 4: Elite TM ROI Ranker ("Who Deserves My Elite TM?")
+  const eliteRoi: EliteTmRoiItem[] = [];
+  for (const r of reportMons) {
+    if (OUT_OF_PLAY.has(r.verdict)) continue;
+    const eliteMoves = r.needs_elite_moves || [];
+    if (eliteMoves.length === 0) continue;
+    const m = monByUid.get(r.id);
+    if (!m) continue;
+
+    const targetSid = (m.evolve_to_sid || m.raid_sid || m.mega_sid || m.species?.speciesId || '').replace(/_shadow$/, '');
+    const targetSp = dex.byId.get(targetSid) || m.species;
+    let dpsGainPct: number | null = null;
+
+    if (targetSp && (m.raid_type || m.mega_type)) {
+      const atype = m.raid_type || m.mega_type || (targetSp.types?.[0]?.toLowerCase() || 'normal');
+      const spTypes = new Set((targetSp.types || []).map((t) => t.toLowerCase()));
+      const cands = raidMovesetCandidates(
+        dex.pve,
+        spTypes,
+        dex.moves,
+        targetSp.fastMoves || [],
+        targetSp.chargedMoves || [],
+        atype,
+        false,
+      );
+      const eliteSet = new Set((targetSp.eliteMoves || []).map((e) => String(e).toUpperCase()));
+      const bestWith = cands[0]?.[0] ?? 0;
+      const bestWithout =
+        cands.find((c) => !eliteSet.has(c[1].toUpperCase()) && !eliteSet.has(c[2].toUpperCase()))?.[0] ?? 0;
+      if (bestWith > 0 && bestWithout > 0) {
+        dpsGainPct = Math.round(((bestWith / bestWithout - 1) * 1000)) / 10;
+      }
+    }
+
+    const pvpRank = m.best_pvp && (r.verdict === 'BUILD_PVP' || m.best_pvp.species_rank <= 50)
+      ? m.best_pvp.species_rank
+      : null;
+
+    let roiScore = 25;
+    if (r.verdict === 'BUILD_PVP') {
+      roiScore = 82 - Math.min(45, (pvpRank ?? 100) * 0.45) + (m.best_pvp && m.best_pvp.iv_rank <= 15 ? 12 : 0);
+      if (dpsGainPct !== null) roiScore += Math.min(12, dpsGainPct * 0.6);
+    } else if (r.verdict === 'BUILD_MEGA' || r.verdict === 'BUILD_RAID') {
+      roiScore = 40 + (dpsGainPct !== null ? Math.min(48, dpsGainPct * 2.2) : 10) + (m.iv_pct >= 93 ? 8 : 0);
+    } else if (dpsGainPct !== null) {
+      roiScore = 20 + Math.min(30, dpsGainPct * 1.4);
+    }
+    if (r.wait_cd_move) roiScore -= 18;
+    roiScore = Math.max(5, Math.min(99, Math.round(roiScore)));
+
+    const roiTier: EliteTmRoiItem['roi_tier'] =
+      roiScore >= 72 ? 'HIGH' : roiScore >= 48 ? 'MEDIUM' : 'LOW';
+    const recommendation: EliteTmRoiItem['recommendation'] =
+      roiTier === 'HIGH' ? 'WORTH ELITE TM' : roiTier === 'MEDIUM' ? 'OPTIONAL' : 'SKIP — SAVE TM';
+
+    const reasonParts: string[] = [];
+    if (r.wait_cd_move) {
+      reasonParts.push(`Pre-evolution can wait for a free Community Day / Legacy event (${r.wait_cd_move})`);
+    }
+    if (dpsGainPct !== null) {
+      reasonParts.push(
+        dpsGainPct >= 10
+          ? `+${dpsGainPct}% Raid DPS over best non-legacy move`
+          : `Only +${dpsGainPct}% Raid DPS over non-legacy move`,
+      );
+    }
+    if (pvpRank !== null) {
+      reasonParts.push(`${m.best_pvp?.league} #${pvpRank} meta requires legacy move`);
+    }
+    if (reasonParts.length === 0) {
+      reasonParts.push('Non-core collection build — regular TM alternatives are plenty.');
+    }
+
+    eliteRoi.push({
+      id: r.id,
+      species: r.species,
+      cp: r.cp,
+      iv: r.iv,
+      level: r.level,
+      role: r.role,
+      verdict: r.verdict,
+      elite_moves: eliteMoves,
+      dps_gain_pct: dpsGainPct,
+      pvp_rank: pvpRank,
+      roi_score: roiScore,
+      roi_tier: roiTier,
+      recommendation,
+      reason: reasonParts.join(' · '),
+      search: r.search,
+    });
+  }
+  eliteRoi.sort((a, b) => b.roi_score - a.roi_score || (b.dps_gain_pct ?? 0) - (a.dps_gain_pct ?? 0));
+
   const reviewActions = mons
     .filter((m) => m.verdict === 'REVIEW')
     .slice(0, 60)
@@ -1996,6 +2197,7 @@ export function computeGradeAndDetails(
         count: eliteSkipCount,
         summary: `${eliteSkipCount} non-priority Elite TM flags skipped — regular TMs cover 90%+ DPS.`,
       },
+      elite_roi: eliteRoi.slice(0, 30),
     },
     review_actions: reviewActions,
     cup_readiness: cupReadiness,
@@ -2299,6 +2501,7 @@ export function buildPriorityLists(
       else if (!itemLabel && m.dex === 800 && (evoLow.includes('dusk') || evoLow.includes('dawn'))) itemLabel = '1,000 Fusion Energy';
       else if (!itemLabel && m.dex === 646 && (evoLow.includes('black') || evoLow.includes('white'))) itemLabel = '1,000 Fusion Energy';
       evolve.push({
+        id: r.id,
         species: r.species,
         cp: r.cp,
         iv: r.iv,
@@ -2308,6 +2511,9 @@ export function buildPriorityLists(
         item: itemLabel,
         via: null,
         role: r.role,
+        wait_cd_move: r.wait_cd_move || null,
+        wait_cd_reason: r.wait_cd_reason,
+        search: r.search,
       });
     }
 
@@ -2519,11 +2725,16 @@ export function buildFullReport(params: {
   const originProtection = buildOriginProtectionSummary(rawData, mons, exportRefMs);
   const eeveeTracker = buildEeveeTracker(rawData, mons);
   const megaOptimizer = buildMegaOptimizer(mons, dex, exportRefMs);
+  const curatedMegas = buildCuratedMegaStatus(mons, dex);
   const buddyPlanner = buildBuddyPoffinPlan(rawData, mons, bagResources);
   const itemsAudit = buildItemsAndStorageAudit(rawData, mons, bagResources, exportRefMs);
   const liveGyms = buildLiveGymsData(rawData, mons, exportRefMs);
   const medalsHub = buildMedalsHub(rawData);
   const xpPlanner = buildXpLevelPlan(rawData, mons, bagResources, dex);
+  const manualKeepSet = new Set(cfg.manual_keep_ids || []);
+  const manualTransferSet = new Set(
+    (cfg.manual_transfer_ids || []).filter((id) => !manualKeepSet.has(id)),
+  );
 
   const reportMons: ReportMon[] = mons.map((m) => {
     const spLabel = displaySpecies(m);
@@ -2540,6 +2751,30 @@ export function buildFullReport(params: {
     if (m.has_mega_unlocked) flags.push(`Mega Lv${Math.max(1, m.mega_level)}`);
     if (m.is_costume) flags.push('Costume');
     if (m.location_card) flags.push('BG');
+    if (manualKeepSet.has(m.uid) || manualTransferSet.has(m.uid)) flags.push('Manual Override');
+
+    // Feature 3: Community Day / Legacy Evolution Alarm
+    let waitCdMove: string | null = null;
+    let waitCdReason: string | undefined;
+    if (m.evolve_to_sid && !isOutOfPlay(m)) {
+      const targetSp = dex.byId.get(m.evolve_to_sid.replace(/_shadow$/, ''));
+      const eliteIds = new Set((targetSp?.eliteMoves || []).map((e) => String(e).toUpperCase()));
+      if (targetSp && eliteIds.size > 0) {
+        const mvParts = (m.moveset || '')
+          .split(' / ')
+          .map((p) => p.trim())
+          .filter(Boolean);
+        const cdHits = mvParts.filter(
+          (mv) =>
+            eliteIds.has(moveIdent(mv)) ||
+            (fields.needs_elite_moves || []).some((em) => em.toLowerCase() === mv.toLowerCase()),
+        );
+        if (cdHits.length > 0) {
+          waitCdMove = cdHits.join(' / ');
+          waitCdReason = `DO NOT EVOLVE YET — evolving into ${cleanSpeciesName(targetSp.speciesName)} outside a Community Day / Legacy event misses ${waitCdMove} (saves an Elite TM).`;
+        }
+      }
+    }
 
     let hold = 'transfer';
     if (m.verdict === 'TRADE') hold = 'trade';
@@ -2620,6 +2855,13 @@ export function buildFullReport(params: {
       origin_move: m.origin_move,
       origin_events: m.origin_events,
       location_card: m.location_card,
+      manual_override: manualKeepSet.has(m.uid)
+        ? 'keep'
+        : manualTransferSet.has(m.uid)
+        ? 'transfer'
+        : null,
+      wait_cd_move: waitCdMove,
+      wait_cd_reason: waitCdReason,
       ...fields,
       ...(m.is_dynamax || m.is_gigantamax
         ? {
@@ -2720,6 +2962,7 @@ export function buildFullReport(params: {
     megaSection,
     coverage,
     bagResources,
+    curatedMegas,
   );
   const holding = buildHoldSummary(mons, auxMap);
   const briefing = buildBriefing(
@@ -2740,6 +2983,11 @@ export function buildFullReport(params: {
     byUid,
     briefing.account.stardust || null,
   );
+  const waitCdMons = reportMons
+    .filter((r) => Boolean(r.wait_cd_move))
+    .map((r) => byUid.get(r.id))
+    .filter((m): m is MonModel => Boolean(m));
+  const evolve_wait_cd_chunks = buildSafeSearchChunks(waitCdMons, mons, '', 1950);
 
   const report: ReportJson = {
     meta: {
@@ -2768,6 +3016,7 @@ export function buildFullReport(params: {
     coverage,
     coverage_min: covState.minPerType,
     evolve,
+    evolve_wait_cd_chunks,
     transfer,
     priority,
     budget: {
@@ -2791,6 +3040,7 @@ export function buildFullReport(params: {
     eevee_tracker: eeveeTracker,
     tag_audit: tagAudit,
     mega_optimizer: megaOptimizer,
+    curated_megas: curatedMegas,
     buddy_planner: buddyPlanner,
     items_audit: itemsAudit,
     live_gyms: liveGyms,

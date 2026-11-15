@@ -1,8 +1,7 @@
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react';
-import path from 'path'
-const something = path.resolve(import.meta.dirname, 'src')
+import path from 'path';
 
 export default defineConfig(() => {
   return {

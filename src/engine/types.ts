@@ -1,3 +1,5 @@
+import type { CuratedMegaTypeRow } from './megaCurated';
+
 export type RaidTier = 'S' | 'A' | 'B' | 'C';
 
 export interface SpeciesEntry {
@@ -153,6 +155,8 @@ export interface PogoConfig {
   protect_gigantamax: boolean;
   keep_copies: number;
   power_level_floor: number;
+  manual_keep_ids?: string[];
+  manual_transfer_ids?: string[];
   pve_model: { enabled: boolean };
   pvp: {
     leagues: string[];
@@ -196,6 +200,7 @@ export interface PogoConfig {
     min_atk_iv: number;
     require_released: boolean;
     require_raid_relevance: boolean;
+    narrow_to_curated?: boolean;
     min_dps_pct_of_best_of_type?: number;
     min_dps_pct_of_type: number;
     recommend_boost_type: boolean;
@@ -680,6 +685,9 @@ export interface ReportMon {
   origin_move?: string | null;
   origin_events?: string[];
   location_card?: string;
+  manual_override?: 'keep' | 'transfer' | null;
+  wait_cd_move?: string | null;
+  wait_cd_reason?: string;
 }
 
 export interface TeamMemberReport {
@@ -846,6 +854,7 @@ export interface PriorityEntry {
 }
 
 export interface EvolveItem {
+  id?: string;
   species: string;
   cp: number;
   iv: string;
@@ -855,6 +864,38 @@ export interface EvolveItem {
   item: string;
   via: string | null;
   role: string;
+  wait_cd_move?: string | null;
+  wait_cd_reason?: string;
+  search?: string;
+}
+
+export interface SafeTransferBatch {
+  key: 'common_junk' | 'wait_double_candy' | 'redundant_dupes';
+  title: string;
+  subtitle: string;
+  total: number;
+  safety_note: string;
+  chunks: { index: number; count: number; query: string; length: number }[];
+  excluded_collisions: number;
+  sample_species: string[];
+}
+
+export interface EliteTmRoiItem {
+  id: string;
+  species: string;
+  cp: number;
+  iv: string;
+  level: number;
+  role: string;
+  verdict: VerdictType;
+  elite_moves: string[];
+  dps_gain_pct: number | null;
+  pvp_rank: number | null;
+  roi_score: number;
+  roi_tier: 'HIGH' | 'MEDIUM' | 'LOW';
+  recommendation: 'WORTH ELITE TM' | 'OPTIONAL' | 'SKIP — SAVE TM';
+  reason: string;
+  search: string;
 }
 
 export interface TransferRowItem {
@@ -1461,13 +1502,16 @@ export interface ReportJson {
   }[];
   coverage_min: number;
   evolve: EvolveItem[];
+  evolve_wait_cd_chunks?: { index: number; count: number; query: string; length: number }[];
   transfer: {
     protected: number;
     total: number;
+    double_candy_count?: number;
     groups: TransferGroup[];
     last_look: LastLookItem[];
     collisions: Record<string, { id: string; iv: string; iv_pct: number; verdict: VerdictType }[]>;
     mass_search_chunks?: { index: number; count: number; query: string; length: number }[];
+    safe_batches?: SafeTransferBatch[];
     review_triage: {
       enabled: boolean;
       probably_keep: ReviewTriageItem[];
@@ -1499,6 +1543,7 @@ export interface ReportJson {
   eevee_tracker?: EeveeTrackerData;
   tag_audit?: TagAuditData;
   mega_optimizer?: MegaOptimizerData;
+  curated_megas?: CuratedMegaTypeRow[];
   buddy_planner?: BuddyPoffinPlannerData;
   items_audit?: ItemsAuditData;
   live_gyms?: LiveGymsData;
@@ -1607,6 +1652,7 @@ export interface ReportJson {
         }[];
         covered: number;
         total: number;
+        curated?: CuratedMegaTypeRow[];
       };
       max: {
         types: {
@@ -1686,6 +1732,7 @@ export interface ReportJson {
         search: string;
       }[];
       elite_skip: { count: number; summary: string };
+      elite_roi?: EliteTmRoiItem[];
     };
     review_actions: {
       id: string;
@@ -1910,6 +1957,20 @@ export interface MegaOptimizerEntry {
   search: string;
 }
 
+export interface MegaWalkTarget {
+  id: string;
+  species: string;
+  mega_name: string;
+  cp: number;
+  iv_pct: number;
+  mega_level: number;
+  buddy_km: number;
+  poffin_km: number;
+  energy_per_candy: number;
+  reason: string;
+  search: string;
+}
+
 export interface MegaOptimizerData {
   unlocked_total: number;
   lv1_count: number;
@@ -1917,6 +1978,7 @@ export interface MegaOptimizerData {
   lv3_count: number;
   active_megas: MegaOptimizerEntry[];
   cycle_queue: MegaOptimizerEntry[];
+  walk_for_energy?: MegaWalkTarget[];
 }
 
 export interface BuddyPoffinTarget {

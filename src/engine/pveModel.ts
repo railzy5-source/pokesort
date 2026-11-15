@@ -1124,9 +1124,31 @@ export class Dex {
         !sp.speciesId.endsWith('_primal'),
     );
     if (cands.length === 0) return null;
-    if (cands.length === 1) return cands[0];
 
     const fn = normStr(mon.form_name);
+    const isPlainForm = !fn || fn === 'unset' || fn.endsWith('normal') || fn.endsWith('standard');
+    const wantedRegional =
+      fn.endsWith('alola') || fn.endsWith('alolan')
+        ? '_alolan'
+        : fn.endsWith('galar') || fn.endsWith('galarian')
+        ? '_galarian'
+        : fn.endsWith('hisui') || fn.endsWith('hisuian')
+        ? '_hisuian'
+        : fn.endsWith('paldea') || fn.endsWith('paldean')
+        ? '_paldean'
+        : null;
+
+    if (cands.length === 1) {
+      const only = cands[0];
+      if (isPlainForm && REGIONAL_SUFFIXES.some((s) => only.speciesId.endsWith(s))) {
+        return null;
+      }
+      if (wantedRegional && !only.speciesId.endsWith(wantedRegional)) {
+        return null;
+      }
+      return only;
+    }
+
     const aliased = FORM_ALIASES[fn];
     if (aliased) {
       const hit = cands.find(
@@ -1137,7 +1159,7 @@ export class Dex {
       if (hit) return hit;
     }
 
-    if (fn && fn !== 'unset' && !fn.endsWith('normal')) {
+    if (!isPlainForm) {
       for (const sp of cands) {
         const sidNorm = normStr(sp.speciesId);
         if (fn.endsWith('alola') && sp.speciesId.endsWith('_alolan')) return sp;
@@ -1148,10 +1170,16 @@ export class Dex {
         if (suffix && fn.endsWith(suffix)) return sp;
         if (sidNorm === fn) return sp;
       }
+      // If a specific regional form was requested and none matched, do NOT mislabel as Normal form
+      if (wantedRegional) return null;
     }
 
-    // Default plain form (shortest id without suffix, or hero/incarnate/altered)
-    const sorted = [...cands].sort((a, b) => a.speciesId.length - b.speciesId.length);
+    // Default plain form (prefer non-regional shortest id without suffix)
+    const sorted = [...cands].sort((a, b) => {
+      const aReg = REGIONAL_SUFFIXES.some((s) => a.speciesId.endsWith(s)) ? 1 : 0;
+      const bReg = REGIONAL_SUFFIXES.some((s) => b.speciesId.endsWith(s)) ? 1 : 0;
+      return aReg - bReg || a.speciesId.length - b.speciesId.length;
+    });
     return sorted[0];
   }
 

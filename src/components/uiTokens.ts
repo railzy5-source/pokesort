@@ -20,6 +20,7 @@ export type TabKey =
   | 'items'
   | 'medals'
   | 'mons'
+  | 'defenders'
   | 'settings';
 
 export const TYPE_COLORS: Record<string, string> = {

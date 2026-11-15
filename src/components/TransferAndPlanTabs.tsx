@@ -10,6 +10,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { ReportJson } from '../engine/types';
+import { solveDustBudgetPlan } from '../engine/bossAndCompare';
 import { copyToClipboard, formatNum, type TabKey } from './uiTokens';
 
 type SortDir = 'asc' | 'desc';
@@ -236,6 +237,63 @@ export const TransferTab: React.FC<TransferTabProps> = ({
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Feature 2 & 10: Stress-Free Safe Mass-Nuke Batches & 2x Transfer Candy Bin */}
+      {T.safe_batches && T.safe_batches.length > 0 && (
+        <div className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]">
+          <div className="mb-3">
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              Stress-Free Safe Mass-Nuke Batches ({T.safe_batches.reduce((s, b) => s + b.total, 0)} mons)
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              Partitioned into 3 mutually exclusive, collision-proof batches (including 2× Transfer Candy Spotlight targets) with zero cross-collisions.
+            </p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            {T.safe_batches.map((batch) => (
+              <div
+                key={batch.key}
+                className="flex flex-col justify-between rounded-lg border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/30"
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">{batch.title}</span>
+                    <span className="font-mono text-xs font-bold text-teal-700 dark:text-teal-300">
+                      {batch.total} mons
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
+                    {batch.subtitle}
+                  </p>
+                  {batch.sample_species.length > 0 && (
+                    <div className="mt-2 text-[10px] text-slate-500">
+                      Sample: {batch.sample_species.join(' · ')}
+                    </div>
+                  )}
+                </div>
+                <div className="mt-4 space-y-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {batch.chunks.map((ch) => (
+                      <button
+                        key={ch.index}
+                        type="button"
+                        onClick={() => copySearch(ch.query, `${batch.title} Chunk ${ch.index}`)}
+                        className="inline-flex items-center gap-1 rounded border border-teal-500/40 bg-white px-2 py-1 font-mono text-[11px] font-semibold text-teal-700 hover:bg-teal-500/10 dark:bg-slate-800 dark:text-teal-300"
+                      >
+                        <Copy className="h-3 w-3" /> Copy Chunk {ch.index} ({ch.count} mons)
+                      </button>
+                    ))}
+                    {batch.chunks.length === 0 && (
+                      <span className="text-[11px] text-slate-400">No mons in this batch.</span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-400">{batch.safety_note}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -1106,6 +1164,99 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
         </div>
       )}
 
+      {/* Feature 6: Stardust & Candy "Shopping Cart" / Budget Planner */}
+      {(() => {
+        const [budgetVal, setBudgetVal] = useState<number>(bag?.stardust || 250000);
+        const budgetPlan = useMemo(() => solveDustBudgetPlan(lv, budgetVal, report.mons), [lv, budgetVal, report.mons]);
+        return (
+          <div className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Stardust &amp; Candy "Shopping Cart" Budget Planner
+                </h2>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  Greedily selects highest-impact builds fitting within your Stardust limit.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  ['Bag Dust', bag?.stardust || 100000],
+                  ['100k', 100000],
+                  ['250k', 250000],
+                  ['500k', 500000],
+                  ['1M', 1000000],
+                ].map(([lbl, val]) => (
+                  <button
+                    key={lbl}
+                    type="button"
+                    onClick={() => setBudgetVal(Number(val))}
+                    className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                      budgetVal === Number(val)
+                        ? 'border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-300'
+                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+                <input
+                  type="number"
+                  min={0}
+                  step={10000}
+                  value={budgetVal}
+                  onChange={(e) => setBudgetVal(Math.max(0, Number(e.target.value)))}
+                  className="w-28 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  placeholder="Custom dust"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 dark:border-slate-800 dark:bg-slate-900/40">
+              <div>
+                <div className="text-[10px] uppercase font-semibold text-slate-500">Selected Builds</div>
+                <div className="mt-0.5 font-mono text-base font-bold text-slate-900 dark:text-slate-100">
+                  {budgetPlan.selectedItems.length} builds
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase font-semibold text-slate-500">Total Dust Required</div>
+                <div className="mt-0.5 font-mono text-base font-bold text-amber-600 dark:text-amber-400">
+                  {formatNum(budgetPlan.totalDust)}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase font-semibold text-slate-500">Candy / XL Used</div>
+                <div className="mt-0.5 font-mono text-xs font-bold text-slate-900 dark:text-slate-100">
+                  {formatNum(budgetPlan.totalCandy)} / {formatNum(budgetPlan.totalXl)} XL
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase font-semibold text-slate-500">Leftover Dust</div>
+                <div className="mt-0.5 font-mono text-base font-bold text-emerald-600 dark:text-emerald-400">
+                  {formatNum(budgetPlan.leftoverDust)}
+                </div>
+              </div>
+            </div>
+
+            {budgetPlan.combinedSearch && (
+              <div className="mt-3 flex items-center justify-between rounded-lg border border-teal-500/30 bg-teal-500/5 px-3 py-2 text-xs">
+                <span className="font-medium text-slate-700 dark:text-slate-300">
+                  Copy Search String for All {budgetPlan.selectedItems.length} Budget Builds: <code className="font-mono text-teal-700 dark:text-teal-300">{budgetPlan.combinedSearch}</code>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => copySearch(budgetPlan.combinedSearch, 'Budget Builds Search')}
+                  className="inline-flex items-center gap-1 rounded border border-teal-500/40 bg-white px-2.5 py-1 font-semibold text-teal-700 hover:bg-teal-500/10 dark:bg-[#0F1B28] dark:text-teal-300"
+                >
+                  <Copy className="h-3 w-3" /> Copy
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Can Build Right Now */}
       <div className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]">
         <div className="mb-2 flex items-center justify-between gap-2">
@@ -1250,6 +1401,113 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Feature 3: Community Day / Legacy Move Evolution Alarms */}
+      {report.evolve_wait_cd_chunks && report.evolve_wait_cd_chunks.length > 0 && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-5 text-xs text-amber-900 dark:text-amber-200">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="font-bold text-sm">
+                DO NOT EVOLVE YET! Community Day / Legacy Move Alarms ({report.evolve.filter((e) => e.wait_cd_move).length})
+              </div>
+              <p className="mt-0.5 text-xs opacity-90">
+                These pre-evolutions need an event-exclusive CD/Legacy move to reach their full potential. Evolving now wastes an Elite TM.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {report.evolve_wait_cd_chunks.map((ch) => (
+                <button
+                  key={ch.index}
+                  type="button"
+                  onClick={() => copySearch(ch.query, `Wait-CD Search Chunk ${ch.index}`)}
+                  className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-white px-2.5 py-1 font-mono text-xs font-semibold text-amber-800 hover:bg-amber-500/10 dark:bg-slate-900 dark:text-amber-300"
+                >
+                  <Copy className="h-3 w-3" /> Copy #WaitCD Search ({ch.count} mons)
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-3 divide-y divide-amber-500/20">
+            {report.evolve
+              .filter((e) => e.wait_cd_move)
+              .map((ev, idx) => (
+                <div key={idx} className="flex items-center justify-between py-2">
+                  <div>
+                    <span className="font-bold">
+                      {ev.species} → {ev.target}
+                    </span>
+                    <div className="mt-0.5 font-mono text-[11px] text-amber-800 dark:text-amber-300">
+                      {ev.wait_cd_reason}
+                    </div>
+                  </div>
+                  <div className="font-mono text-right tabular-nums">
+                    <div>CP {formatNum(ev.cp)} · {ev.iv}</div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Feature 4: Elite TM ROI Ranker ("Who Deserves My Elite TM?") */}
+      {tm.elite_roi && tm.elite_roi.length > 0 && (
+        <div className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]">
+          <div className="mb-3">
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              Elite TM ROI Ranker ("Who Deserves My Elite TM?") ({tm.elite_roi.length})
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              Scored by actual Raid DPS gain % and PvP composite impact so you spend rare Elite TMs only on high-yield investments.
+            </p>
+          </div>
+          <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+            {tm.elite_roi.map((roi) => (
+              <div key={roi.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onInspectId(roi.id)}
+                      className="font-bold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
+                    >
+                      {roi.species}
+                    </button>
+                    <span className="font-mono text-slate-500 tabular-nums">
+                      CP {formatNum(roi.cp)} · {roi.iv} · L{roi.level}
+                    </span>
+                    <span
+                      className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${
+                        roi.recommendation === 'WORTH ELITE TM'
+                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                          : roi.recommendation === 'OPTIONAL'
+                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                          : 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
+                      }`}
+                    >
+                      {roi.recommendation}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+                    {roi.reason}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <span className="font-mono text-xs font-semibold tabular-nums text-purple-700 dark:text-purple-300">
+                    ROI Score {roi.roi_score}/100
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => copySearch(roi.search, roi.species)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:border-teal-500 dark:border-slate-700 dark:text-slate-300"
+                  >
+                    <Copy className="h-3 w-3" /> Search
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

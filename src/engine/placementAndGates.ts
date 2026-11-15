@@ -8,6 +8,12 @@ import {
   normStr,
   RAID_USEFUL_TYPES,
 } from './defaultConfig';
+import {
+  getCuratedMegaInfo,
+  getPokebaseMegaTier,
+  isCuratedMega,
+  resolveActiveCuratedMegaSids,
+} from './megaCurated';
 import { bestPvpLevel, computeCp, CPM } from './cpmTable';
 import {
   boostTypesFor,
@@ -343,9 +349,10 @@ export function assignTypes(
   const bw = Number(cfg.raid.bulk_weight ?? 1.0);
   const preferSh = Boolean(cfg.raid.prefer_shadow);
   const shBonus = Number(cfg.raid.shadow_dps_bonus ?? 1.2);
+  const manualTransferIds = new Set(cfg.manual_transfer_ids || []);
 
   for (const m of mons) {
-    if (!m.species) continue;
+    if (!m.species || manualTransferIds.has(m.uid)) continue;
     const aux = getAux(auxMap, m);
     if (isMax) {
       if (!m.is_dynamax && !m.is_gigantamax) continue;
@@ -542,9 +549,10 @@ export function applyRaidGate(
   const teamSlots = Number(rc.keep_per_type ?? 6);
 
   const rejectedByType = new Map<string, MonModel[]>();
+  const manualTransferIds = new Set(cfg.manual_transfer_ids || []);
 
   for (const m of mons) {
-    if (!m.raid_type || !m.species) continue;
+    if (!m.raid_type || !m.species || manualTransferIds.has(m.uid)) continue;
     const aux = getAux(auxMap, m);
     const isGap = covState.gapTypes.has(m.raid_type);
     const reqIv = Math.max(40, minIv - (isGap ? ivSlack : 0));
@@ -602,9 +610,10 @@ export function applyMaxGate(
   const minIv = Number(cfg.raid.min_iv_pct ?? 60);
   const teamSlots = Number(mc.keep_per_type ?? 4);
   const reserveSlots = Number(mc.reserve_keep ?? 2);
+  const manualTransferIds = new Set(cfg.manual_transfer_ids || []);
 
   for (const m of mons) {
-    if (!m.max_type || !m.species) continue;
+    if (!m.max_type || !m.species || manualTransferIds.has(m.uid)) continue;
     const aux = getAux(auxMap, m);
     const reqIv = m.is_gigantamax ? Math.max(55, minIv - 10) : minIv;
     const reqAtk = m.is_gigantamax ? Math.max(5, minAtk - 4) : minAtk;
@@ -631,10 +640,20 @@ export function applyMegaGate(
   const minIv = Number(mc.min_iv_pct ?? 82);
   const minAtk = Number(mc.min_atk_iv ?? 12);
   const maxPerMega = Number(mc.keep_per_family ?? 1);
+  const narrowToCurated = mc.narrow_to_curated !== false;
   const byMegaSid = new Map<string, MonModel[]>();
+  const manualTransferIds = new Set(cfg.manual_transfer_ids || []);
+  const activeCuratedSids = narrowToCurated
+    ? resolveActiveCuratedMegaSids(
+        mons.filter((m) => !manualTransferIds.has(m.uid)),
+        dex,
+        minIv,
+        minAtk,
+      )
+    : null;
 
   for (const m of mons) {
-    if (!m.species || !m.is_mega_capable || !m.mega_sid) continue;
+    if (!m.species || !m.is_mega_capable || !m.mega_sid || manualTransferIds.has(m.uid)) continue;
     const aux = getAux(auxMap, m);
     aux.can_mega = true;
     const boostTypes = dex.megaBoostTypes(m.mega_sid);
@@ -644,24 +663,31 @@ export function applyMegaGate(
     byMegaSid.set(m.mega_sid, list);
   }
 
-  for (const [, group] of byMegaSid.entries()) {
+  for (const [megaSid, group] of byMegaSid.entries()) {
     group.sort((a, b) => {
       const aUn = a.has_mega_unlocked ? 1 : 0;
       const bUn = b.has_mega_unlocked ? 1 : 0;
       return bUn - aUn || b.mega_level - a.mega_level || b.iv_pct - a.iv_pct || b.cp - a.cp;
     });
+
+    const isCurated =
+      !narrowToCurated ||
+      (activeCuratedSids ? activeCuratedSids.has(megaSid.toLowerCase()) : isCuratedMega(megaSid));
     let kept = 0;
+
     for (const m of group) {
       const aux = getAux(auxMap, m);
+      // Already unlocked: protected via protect: ['mega_unlocked'], but only allocate up to maxPerMega
+      // BUILD_MEGA slots so duplicate unlocked copies (e.g. multiple Mega Lv1 Chandelures) don't spam BUILD_MEGA.
       if (m.has_mega_unlocked) {
-        aux.mega_home = true;
-        kept++;
+        if (kept < maxPerMega) {
+          aux.mega_home = true;
+          kept++;
+        }
         continue;
       }
-      if (!m.is_shadow && m.iv_pct >= minIv && m.a >= minAtk && kept < maxPerMega) {
-        aux.mega_home = true;
-        kept++;
-      } else if (!m.is_shadow && m.iv_pct >= minIv - 4 && kept === 0) {
+      // Prospective un-unlocked: require curated meta tier + strict IV + family limit
+      if (isCurated && !m.is_shadow && m.iv_pct >= minIv && m.a >= minAtk && kept < maxPerMega) {
         aux.mega_home = true;
         kept++;
       } else {
@@ -684,8 +710,9 @@ export function applyGymGate(
   if (defs.size === 0) return;
 
   const byDefenderSid = new Map<string, MonModel[]>();
+  const manualTransferIds = new Set(cfg.manual_transfer_ids || []);
   for (const m of mons) {
-    if (!m.species) continue;
+    if (!m.species || manualTransferIds.has(m.uid)) continue;
     if (m.is_shadow && !gc.allow_shadow) continue;
     for (const d of dex.descendants(m.species.speciesId)) {
       const sp = dex.byId.get(d);
@@ -736,6 +763,10 @@ export function classifyMons(
   const confirmedTransferIds = new Set<string>(triageCfg?.confirmed_transfer_ids || []);
   const triageEnabled = triageCfg?.enabled !== false;
   const transferIvFloor = Number(triageCfg?.transfer_iv_pct ?? 70);
+  const manualKeepIds = new Set<string>(cfg.manual_keep_ids || []);
+  const manualTransferIds = new Set<string>(
+    (cfg.manual_transfer_ids || []).filter((id) => !manualKeepIds.has(id)),
+  );
 
   // 1. Protections
   const specialDex = new Set(cfg.protect_species_dex || []);
@@ -743,6 +774,8 @@ export function classifyMons(
   const excludeTagSet = new Set((cfg.exclude_tag_names || []).map((t) => t.trim().toLowerCase()).filter(Boolean));
 
   for (const m of mons) {
+    if (manualTransferIds.has(m.uid)) continue;
+    if (manualKeepIds.has(m.uid)) m.protect.push('manual_keep');
     if (m.is_favorite && cfg.protect_favorite) m.protect.push('favorite');
     if (m.is_shiny && cfg.protect_shiny) m.protect.push('shiny');
     if (m.is_lucky && cfg.protect_lucky) m.protect.push('lucky');
@@ -796,7 +829,7 @@ export function classifyMons(
   // Cap iv_hi per species
   const ivHiByDex = new Map<number, MonModel[]>();
   for (const m of mons) {
-    if (getAux(auxMap, m).iv_hi) {
+    if (!manualTransferIds.has(m.uid) && getAux(auxMap, m).iv_hi) {
       const arr = ivHiByDex.get(m.dex) || [];
       arr.push(m);
       ivHiByDex.set(m.dex, arr);
@@ -836,7 +869,8 @@ export function classifyMons(
         const sp = dex.byId.get(d);
         if (!sp) continue;
 
-        let ivRankNum = 1;
+        const computedIvR = isMaster ? null : dex.ivRank(d, cap, m.a, m.d, m.s);
+        let ivRankNum = computedIvR ? computedIvR[0] : 4096;
         let targetLv = 50;
         let targetCp = computeCp(sp.baseStats, m.a, m.d, m.s, 50) ?? 0;
         let eligible = true;
@@ -868,13 +902,9 @@ export function classifyMons(
               if (m.level > targetLv + 0.01) {
                 eligible = false;
                 ineligibleReason = `already L${m.level} > target L${targetLv}`;
-              } else {
-                const ivR = dex.ivRank(d, cap, m.a, m.d, m.s);
-                ivRankNum = ivR ? ivR[0] : 500;
-                if (ivRankNum > maxPvpIvRank) {
-                  eligible = false;
-                  ineligibleReason = `IV rank #${ivRankNum} > #${maxPvpIvRank}`;
-                }
+              } else if (ivRankNum > maxPvpIvRank) {
+                eligible = false;
+                ineligibleReason = `IV rank #${ivRankNum} > #${maxPvpIvRank}`;
               }
             }
           }
@@ -930,7 +960,8 @@ export function classifyMons(
         let eligible = m.cp <= cap;
         let targetLv = 40;
         let targetCp = cap;
-        let ivRankNum = 1;
+        const ivR = dex.ivRank(d, cap, m.a, m.d, m.s);
+        const ivRankNum = ivR ? ivR[0] : 4096;
         if (eligible) {
           const bestLvl = bestPvpLevel(sp.baseStats, cap, m.a, m.d, m.s);
           if (!bestLvl || m.level > bestLvl[0] + 0.01) {
@@ -938,8 +969,6 @@ export function classifyMons(
           } else {
             targetLv = bestLvl[0];
             targetCp = bestLvl[1];
-            const ivR = dex.ivRank(d, cap, m.a, m.d, m.s);
-            ivRankNum = ivR ? ivR[0] : 500;
             if (ivRankNum > maxPvpIvRank) {
               eligible = false;
             }
@@ -985,6 +1014,60 @@ export function classifyMons(
         a.iv_rank - b.iv_rank,
     );
     if (allEligible.length > 0) m.best_pvp = allEligible[0];
+
+    // Protect genuine Rank #1 PvP IV spreads (across GL/UL and active Little/Cup caps)
+    // and honor cfg.protect_top_pvp_iv_rank so top PvP IV spreads are never sent to Transfer/Trade.
+    const protectTopPvpRank = Number(cfg.protect_top_pvp_iv_rank ?? 10);
+    const stdPvpCaps = Array.from(new Set([...caps.filter((c) => c < 10000), 1500, 2500]));
+    let hasRank1Pvp = false;
+    let bestTopPvpRank: number | null = null;
+    for (const d of desc) {
+      if (d.endsWith('_mega') || d.endsWith('_primal')) continue;
+      const sp = dex.byId.get(d);
+      if (!sp) continue;
+      for (const cap of stdPvpCaps) {
+        if (m.cp > cap) continue;
+        const bestLvl = bestPvpLevel(sp.baseStats, cap, m.a, m.d, m.s);
+        if (!bestLvl || m.level > bestLvl[0] + 0.01) continue;
+        const ivR = dex.ivRank(d, cap, m.a, m.d, m.s);
+        if (!ivR) continue;
+        const rank = ivR[0];
+        const isRanked = Boolean(dex.pvpPos.get(cap)?.has(d));
+        if (rank === 1 && (bestLvl[1] >= cap * 0.85 || isRanked)) {
+          hasRank1Pvp = true;
+          break;
+        }
+        if (
+          protectTopPvpRank > 0 &&
+          rank <= protectTopPvpRank &&
+          isRanked &&
+          (dex.pvpPos.get(cap)?.get(d)?.[0] ?? 9999) <= 250
+        ) {
+          if (bestTopPvpRank === null || rank < bestTopPvpRank) {
+            bestTopPvpRank = rank;
+          }
+        }
+      }
+      if (hasRank1Pvp) break;
+    }
+    if (!hasRank1Pvp && [...pvpList, ...cupList].some((e) => e.eligible && e.iv_rank === 1)) {
+      hasRank1Pvp = true;
+    }
+    if (!hasRank1Pvp && protectTopPvpRank > 0) {
+      const topCupOrLeague = [...pvpList, ...cupList].find(
+        (e) => e.eligible && e.iv_rank <= protectTopPvpRank && e.species_rank <= 250,
+      );
+      if (topCupOrLeague && (bestTopPvpRank === null || topCupOrLeague.iv_rank < bestTopPvpRank)) {
+        bestTopPvpRank = topCupOrLeague.iv_rank;
+      }
+    }
+    if (!manualTransferIds.has(m.uid)) {
+      if (hasRank1Pvp && !m.protect.includes('pvp_iv_#1')) {
+        m.protect.push('pvp_iv_#1');
+      } else if (bestTopPvpRank !== null && !m.protect.some((p) => p.startsWith('pvp_iv_'))) {
+        m.protect.push(`pvp_iv_#${bestTopPvpRank}`);
+      }
+    }
   }
 
   // 3. Cap builds per (speciesId, CP cap): 1 copy per Pokemon per league cap,
@@ -1018,6 +1101,7 @@ export function classifyMons(
   const allPvpCands: PvpCandidate[] = [];
 
   for (const m of mons) {
+    if (manualTransferIds.has(m.uid)) continue;
     const eligibleEntries = [...m.pvp, ...m.cup_pvp].filter((e) => {
       if (!e.eligible || e.species_rank > maxSpeciesRank || e.composite > minComposite) {
         return false;
@@ -1218,7 +1302,17 @@ export function classifyMons(
     const raidRef = m.raid_type ? refDps(dex, dex.raidRankings, m.raid_type, true) : 1;
     const raidPct = raidRef > 0 ? (100 * m.raid_dps) / raidRef : 0;
 
-    if (hasPvp && m.best_pvp) {
+    if (manualTransferIds.has(m.uid)) {
+      m.verdict = 'TRANSFER';
+      m.role = 'Manual Override (Transfer)';
+      m.evolve_to = '';
+      m.evolve_to_sid = null;
+      m.power_up_to = null;
+      m.build_cp = null;
+      m.moveset = '';
+      m.why_keep = 'Manually forced to Transfer by user override.';
+      aux.verdict_priority = 9;
+    } else if (hasPvp && m.best_pvp) {
       const p = m.best_pvp;
       const metaMap = p.cup ? dex.cupMeta.get(p.cup) : dex.pvpMeta.get(p.cap);
       const mvList = (metaMap?.get(p.sid)?.moveset || []).slice(0, 3).map(moveLabel).join(' / ');
@@ -1237,7 +1331,15 @@ export function classifyMons(
       m.verdict = 'BUILD_MEGA';
       const megaLabel = spName(dex, m.mega_sid);
       const boostTypes = dex.megaBoostTypes(m.mega_sid);
-      m.role = `${megaLabel} · boosts ${boostTypes.join(' / ') || m.mega_type || 'type'}`;
+      const curatedInfo = getCuratedMegaInfo(m.mega_sid, m.mega_type || undefined);
+      const pokebaseTier = curatedInfo?.pokebaseTier ?? getPokebaseMegaTier(m.mega_sid);
+      const pbBadge = pokebaseTier ? `Pokébase ${pokebaseTier}-Tier` : '';
+      const tierTag = curatedInfo
+        ? ` · ${pbBadge ? `${pbBadge} · ` : ''}${curatedInfo.costTier === 'expensive' ? 'Expensive Option' : 'Cheap Option'} (${curatedInfo.costLabel})`
+        : pbBadge
+        ? ` · ${pbBadge}`
+        : '';
+      m.role = `${megaLabel}${tierTag} · boosts ${boostTypes.join(' / ') || m.mega_type || 'type'}`;
       m.evolve_to_sid = m.is_mega_pre_evo ? m.mega_sid.replace(/_mega.*|_primal/, '') : null;
       m.evolve_to = m.evolve_to_sid ? spName(dex, m.evolve_to_sid) : '';
       m.power_up_to = m.level < 40 ? pveTargetLevel(m, cfg) : null;
@@ -1250,8 +1352,8 @@ export function classifyMons(
         m.moveset_note = note;
       }
       m.why_keep = m.has_mega_unlocked
-        ? `Mega Level ${m.mega_level || 1} unlocked — boosts ${boostTypes.join(' / ')} raids & candy.`
-        : `Strong Mega candidate (${m.iv_pct}% IV) for ${megaLabel}.`;
+        ? `Mega Level ${m.mega_level || 1} unlocked${pbBadge ? ` (${pbBadge})` : ''} — boosts ${boostTypes.join(' / ')} raids & candy.${curatedInfo ? ` ${curatedInfo.roleNote}` : ''}`
+        : `Top ${pbBadge || (curatedInfo ? curatedInfo.costTier : 'curated')} Mega candidate (${m.iv_pct}% IV) for ${megaLabel}.${curatedInfo ? ` ${curatedInfo.costLabel}. ${curatedInfo.roleNote}` : ''}`;
       aux.verdict_priority = 2;
     } else if (hasRaid && m.raid_type && raidPct >= raidMinDpsPct) {
       m.verdict = 'BUILD_RAID';
@@ -1292,6 +1394,11 @@ export function classifyMons(
       m.evolve_to = m.evolve_to_sid ? spName(dex, m.evolve_to_sid) : '';
       m.why_keep = 'High-bulk gym defender.';
       aux.verdict_priority = 5;
+    } else if (manualKeepIds.has(m.uid)) {
+      m.verdict = 'KEEP';
+      m.role = 'Manual Keep (Locked)';
+      m.why_keep = 'Manually locked as Keep by user override.';
+      aux.verdict_priority = 6;
     } else if (confirmedTransferIds.has(m.uid)) {
       m.verdict = 'TRANSFER';
       m.role = 'Confirmed transfer';
@@ -1313,7 +1420,7 @@ export function classifyMons(
       m.role = 'XXL Showcase contender';
       m.why_keep = 'Kept in Collection: XXL size qualifies for PokéStop Showcases.';
       aux.verdict_priority = 6;
-    } else if (!m.is_shadow && m.iv_pct >= 98) {
+    } else if (!m.is_shadow && m.iv_pct >= 97.7) {
       m.verdict = 'KEEP';
       m.role = `Collection (${m.iv_pct}% IV trophy)`;
       m.why_keep = `High-IV (${m.iv_pct}%) specimen kept in Collection.`;
