@@ -281,7 +281,12 @@ export function parsePgsExport(input: unknown): ParsedExport {
       if (!t || typeof t !== 'object') continue;
       const tr = t as { id?: string | number; name?: string; color?: number };
       if (tr.id !== undefined && tr.id !== null && tr.name) {
-        tagMap.set(String(tr.id), { name: String(tr.name), color: Number(tr.color ?? 0) });
+        const entry = { name: String(tr.name), color: Number(tr.color ?? 0) };
+        tagMap.set(String(tr.id), entry);
+        const asNum = Number(tr.id);
+        if (Number.isFinite(asNum)) {
+          tagMap.set(String(asNum), entry);
+        }
       }
     }
   }

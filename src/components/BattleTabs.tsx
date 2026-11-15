@@ -441,11 +441,11 @@ export const RaidTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
                               )}
                             </div>
                             <div className="text-[11px] text-slate-500">
-                              {m.moveset} · IV {m.iv} · L{m.level}
+                              <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">CP {formatNum(m.cp)}</span> · L{m.level} · IV {m.iv} · {m.moveset}
                             </div>
                           </div>
                           <div className="shrink-0 text-right font-mono font-semibold text-slate-700 dark:text-slate-300">
-                            {m.dps}
+                            {m.dps} dps
                           </div>
                         </div>
                       );
@@ -477,11 +477,11 @@ export const RaidTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
                                 </button>
                               </div>
                               <div className="text-[11px] text-slate-500">
-                                {m.moveset} · IV {m.iv} · L{m.level}
+                                <span className="font-mono font-medium text-slate-600 dark:text-slate-300">CP {formatNum(m.cp)}</span> · L{m.level} · IV {m.iv} · {m.moveset}
                               </div>
                             </div>
                             <div className="shrink-0 text-right font-mono text-slate-600 dark:text-slate-400">
-                              {m.dps}
+                              {m.dps} dps
                             </div>
                           </div>
                         ))}
@@ -537,7 +537,8 @@ export const MaxTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
                     onClick={() => onInspectId(t.id)}
                     className="font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
                   >
-                    {t.species}
+                    {t.species}{' '}
+                    <span className="font-mono font-normal text-slate-500">· CP {formatNum(t.cp)}</span>
                   </button>
                   <span className="font-mono text-slate-500">
                     {t.unlocked ? `Guard Lv${t.move_level}` : `${t.pct_of_best}% bulk`}
@@ -558,7 +559,8 @@ export const MaxTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
                     onClick={() => onInspectId(t.id)}
                     className="font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
                   >
-                    {t.species}
+                    {t.species}{' '}
+                    <span className="font-mono font-normal text-slate-500">· CP {formatNum(t.cp)}</span>
                   </button>
                   <span className="font-mono text-slate-500">
                     {t.unlocked ? `Spirit Lv${t.move_level}` : `${t.pct_of_best}% HP`}
@@ -600,11 +602,26 @@ export const MaxTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
 
             <div className="mt-2 divide-y divide-slate-100 text-xs dark:divide-slate-800">
               {t.team.map((m, i) => (
-                <div key={i} className="flex items-center justify-between py-1.5">
-                  <span className="font-semibold text-slate-900 dark:text-slate-100">
-                    {m.name} <span className="font-mono font-normal text-slate-500">({m.iv})</span>
+                <div key={m.id || i} className="flex items-center justify-between gap-2 py-1.5">
+                  <div className="min-w-0">
+                    {m.id ? (
+                      <button
+                        type="button"
+                        onClick={() => onInspectId(m.id!)}
+                        className="truncate text-left font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
+                      >
+                        {m.name}
+                      </button>
+                    ) : (
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">{m.name}</span>
+                    )}
+                    <div className="font-mono text-[11px] text-slate-500">
+                      CP {formatNum(m.cp)} · IV {m.iv}
+                    </div>
+                  </div>
+                  <span className="shrink-0 font-mono font-semibold text-slate-600 dark:text-slate-300">
+                    {m.dps} dps
                   </span>
-                  <span className="font-mono text-slate-600 dark:text-slate-300">{m.dps} dps</span>
                 </div>
               ))}
               {t.team.length === 0 && (

@@ -344,7 +344,7 @@ export const DEFAULT_CFG: PogoConfig = {
     enabled: true,
     top_n: 5,
     species_rank_max: 200,
-    iv_rank_max: 300,
+    iv_rank_max: 50,
     require_distinct_types: true,
     cup_max_shared_members: 1,
     league_max_shared_members: 1,
@@ -369,8 +369,8 @@ export const DEFAULT_CFG: PogoConfig = {
   },
 
   power_up_priority: {
-    iv_rank_cutoff: 500,
-    do_not_invest_iv_rank: 500,
+    iv_rank_cutoff: 50,
+    do_not_invest_iv_rank: 50,
     max_rows: 40,
     top_n: 12,
     max_per_species: 1,

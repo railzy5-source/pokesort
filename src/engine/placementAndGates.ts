@@ -811,6 +811,7 @@ export function classifyMons(
   }
 
   // 2. PvP Evaluation
+  const maxPvpIvRank = Math.min(50, Number(cfg.pvp?.keep_iv_rank ?? 50));
   for (const m of mons) {
     if (!m.species) continue;
     const desc = dex.descendants(m.species.speciesId);
@@ -870,6 +871,10 @@ export function classifyMons(
               } else {
                 const ivR = dex.ivRank(d, cap, m.a, m.d, m.s);
                 ivRankNum = ivR ? ivR[0] : 500;
+                if (ivRankNum > maxPvpIvRank) {
+                  eligible = false;
+                  ineligibleReason = `IV rank #${ivRankNum} > #${maxPvpIvRank}`;
+                }
               }
             }
           }
@@ -935,6 +940,9 @@ export function classifyMons(
             targetCp = bestLvl[1];
             const ivR = dex.ivRank(d, cap, m.a, m.d, m.s);
             ivRankNum = ivR ? ivR[0] : 500;
+            if (ivRankNum > maxPvpIvRank) {
+              eligible = false;
+            }
           }
         }
         const composite = Math.round((spRank + ivRankNum * 0.25) * 10) / 10;
@@ -1005,14 +1013,11 @@ export function classifyMons(
     return a.mon.idx - b.mon.idx;
   };
 
-  const baseMaxBuildIvRank = Number(cfg.power_up_priority?.iv_rank_cutoff ?? 500);
+  const baseMaxBuildIvRank = Math.min(maxPvpIvRank, Number(cfg.power_up_priority?.iv_rank_cutoff ?? maxPvpIvRank));
   const monCandBySidCap = new Map<string, Map<string, PvpCandidate>>();
   const allPvpCands: PvpCandidate[] = [];
 
   for (const m of mons) {
-    const isRestrictedSource = Boolean(
-      m.species?.tags?.some((t) => ['legendary', 'mythical', 'ultrabeast'].includes(t)),
-    );
     const eligibleEntries = [...m.pvp, ...m.cup_pvp].filter((e) => {
       if (!e.eligible || e.species_rank > maxSpeciesRank || e.composite > minComposite) {
         return false;
@@ -1020,12 +1025,10 @@ export function classifyMons(
       if (e.cap >= 10000) {
         return e.species_rank <= 80;
       }
-      if (isRestrictedSource) {
-        const effRankCap = e.species_rank <= 50 ? Math.max(baseMaxBuildIvRank, 1500) : Math.min(baseMaxBuildIvRank, 400);
-        return e.iv_rank <= effRankCap;
+      if (e.iv_rank > baseMaxBuildIvRank) {
+        return false;
       }
-      const effRankCap = e.species_rank <= 75 ? baseMaxBuildIvRank : Math.min(baseMaxBuildIvRank, 200);
-      return (e.cup ? e.species_rank <= 80 : e.species_rank <= 150) && e.iv_rank <= effRankCap;
+      return e.cup ? e.species_rank <= 80 : e.species_rank <= 150;
     });
     if (eligibleEntries.length === 0) continue;
 

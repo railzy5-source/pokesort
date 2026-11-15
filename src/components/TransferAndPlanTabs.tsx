@@ -56,9 +56,11 @@ export const TransferTab: React.FC<TransferTabProps> = ({
   const collisionEntries = Object.entries(T.collisions || {});
   const chunks = T.mass_search_chunks || [];
   const [auditFilter, setAuditFilter] = useState<'all' | 'wrong_cap' | 'duplicate_league' | 'transfer_tagged' | 'untagged_build'>('all');
+  const [auditTagFilter, setAuditTagFilter] = useState<string>('all');
+  const [showAllAudit, setShowAllAudit] = useState(false);
 
   // Sort states
-  const [auditSort, setAuditSort] = useState<'category' | 'species' | 'cp' | 'verdict'>('category');
+  const [auditSort, setAuditSort] = useState<'tag' | 'category' | 'species' | 'cp' | 'verdict'>('tag');
   const [auditDir, setAuditDir] = useState<SortDir>('asc');
 
   const [lastLookSort, setLastLookSort] = useState<'triggers' | 'iv' | 'cp' | 'level' | 'species'>('triggers');
@@ -109,18 +111,43 @@ export const TransferTab: React.FC<TransferTabProps> = ({
     });
   }, [T.last_look, lastLookSort, lastLookDir]);
 
+  const auditAvailableTags = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of tagAudit?.mismatches || []) {
+      for (const t of m.tags || []) s.add(t);
+    }
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [tagAudit]);
+
+  const auditTagLabel = (m: NonNullable<typeof tagAudit>['mismatches'][number]) => {
+    if (m.tags && m.tags.length > 0) return m.tags.join(', ');
+    if (m.recommended_tag) return `Untagged -> ${m.recommended_tag}`;
+    return 'Untagged';
+  };
+
   const sortedAudit = useMemo(() => {
-    const filtered = (tagAudit?.mismatches || []).filter(
-      (m) => auditFilter === 'all' || m.category === auditFilter,
-    );
+    const filtered = (tagAudit?.mismatches || []).filter((m) => {
+      if (auditFilter !== 'all' && m.category !== auditFilter) return false;
+      if (auditTagFilter === '__untagged__') return !m.tags || m.tags.length === 0;
+      if (auditTagFilter !== 'all') return (m.tags || []).includes(auditTagFilter);
+      return true;
+    });
     const mul = auditDir === 'asc' ? 1 : -1;
     return [...filtered].sort((a, b) => {
+      if (auditSort === 'tag') {
+        const aTagged = (a.tags?.length || 0) > 0 ? 0 : 1;
+        const bTagged = (b.tags?.length || 0) > 0 ? 0 : 1;
+        if (aTagged !== bTagged) return (aTagged - bTagged) * mul;
+        const aLbl = (a.tags?.[0] || a.recommended_tag || 'zzz').toLowerCase();
+        const bLbl = (b.tags?.[0] || b.recommended_tag || 'zzz').toLowerCase();
+        return aLbl.localeCompare(bLbl) * mul || b.cp - a.cp;
+      }
       if (auditSort === 'category') return a.category.localeCompare(b.category) * mul || b.cp - a.cp;
       if (auditSort === 'cp') return (a.cp - b.cp) * mul;
       if (auditSort === 'verdict') return a.verdict.localeCompare(b.verdict) * mul || b.cp - a.cp;
       return a.species.localeCompare(b.species) * mul || b.cp - a.cp;
     });
-  }, [tagAudit, auditFilter, auditSort, auditDir]);
+  }, [tagAudit, auditFilter, auditTagFilter, auditSort, auditDir]);
 
   const transferMons = useMemo(() => {
     const list = report.mons.filter((m) => m.verdict === 'TRANSFER');
@@ -293,12 +320,26 @@ export const TransferTab: React.FC<TransferTabProps> = ({
               ))}
             </div>
 
-            <div className="flex items-center gap-1.5 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <select
+                value={auditTagFilter}
+                onChange={(e) => setAuditTagFilter(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-700 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              >
+                <option value="all">Tag: All</option>
+                <option value="__untagged__">Tag: Untagged</option>
+                {auditAvailableTags.map((t) => (
+                  <option key={t} value={t}>
+                    Tag: #{t}
+                  </option>
+                ))}
+              </select>
               <select
                 value={auditSort}
                 onChange={(e) => setAuditSort(e.target.value as typeof auditSort)}
                 className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-700 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
               >
+                <option value="tag">Sort: Tag</option>
                 <option value="category">Sort: Category</option>
                 <option value="species">Sort: Species</option>
                 <option value="cp">Sort: CP</option>
@@ -316,24 +357,38 @@ export const TransferTab: React.FC<TransferTabProps> = ({
           </div>
 
           <div className="mt-3 divide-y divide-slate-100 text-xs dark:divide-slate-800">
-            {sortedAudit
-              .slice(0, 30)
-              .map((m, idx) => (
+            {(showAllAudit ? sortedAudit : sortedAudit.slice(0, 30)).map((m, idx) => (
                 <div
                   key={`${m.id}-${m.category}-${idx}`}
                   className="flex flex-col gap-1.5 py-2 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div>
-                    <button
-                      type="button"
-                      onClick={() => onInspectId(m.id)}
-                      className="font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
-                    >
-                      {m.species}
-                    </button>{' '}
-                    <span className="font-mono text-slate-500">
-                      CP {formatNum(m.cp)} · {m.iv}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onInspectId(m.id)}
+                        className="font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
+                      >
+                        {m.species}
+                      </button>
+                      <span className="font-mono text-slate-500">
+                        CP {formatNum(m.cp)} · {m.iv}
+                      </span>
+                      {m.tags && m.tags.length > 0 ? (
+                        m.tags.map((t) => (
+                          <span
+                            key={t}
+                            className="rounded border border-teal-500/30 bg-teal-500/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-teal-700 dark:text-teal-300"
+                          >
+                            #{t}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                          {auditTagLabel(m)}
+                        </span>
+                      )}
+                    </div>
                     <div className="mt-0.5 text-[11px] font-medium text-rose-600 dark:text-rose-400">
                       {m.issue}
                     </div>
@@ -348,7 +403,21 @@ export const TransferTab: React.FC<TransferTabProps> = ({
                   </button>
                 </div>
               ))}
+            {sortedAudit.length === 0 && (
+              <div className="py-4 text-center text-slate-500">
+                No tag mismatches match the current filters.
+              </div>
+            )}
           </div>
+          {sortedAudit.length > 30 && (
+            <button
+              type="button"
+              onClick={() => setShowAllAudit((v) => !v)}
+              className="mt-2 text-xs font-semibold text-teal-600 hover:underline dark:text-teal-400"
+            >
+              {showAllAudit ? 'Show fewer' : `Show all ${sortedAudit.length} mismatches`}
+            </button>
+          )}
         </div>
       )}
 

@@ -219,13 +219,18 @@ function buildTeamsForKey(
   const ptCfg = cfg.pvp_teams;
   const perLeague = Number(ptCfg.top_n ?? 5);
   const maxRank = Number(ptCfg.species_rank_max ?? 200);
+  const maxIvRank = Math.min(50, Number(cfg.pvp?.keep_iv_rank ?? 50), Number(ptCfg.iv_rank_max ?? 50));
 
   const pool: { m: MonModel; e: NonNullable<MonModel['best_pvp']> }[] = [];
   for (const m of mons) {
     if (isOutOfPlay(m) || !m.species) continue;
     const entries = isCup ? m.cup_pvp : m.pvp;
     const hit = entries.find(
-      (e) => (isCup ? e.cup === key : e.cap === key) && e.eligible && e.species_rank <= maxRank,
+      (e) =>
+        (isCup ? e.cup === key : e.cap === key) &&
+        e.eligible &&
+        e.species_rank <= maxRank &&
+        (cap >= 10000 || e.iv_rank <= maxIvRank),
     );
     if (hit) pool.push({ m, e: hit });
   }
@@ -1187,12 +1192,12 @@ function buildWishlistPvp(
         const pick = (eligible.length ? eligible : owned).sort((a, b) => b.iv_pct - a.iv_pct)[0];
         const pEntry = pick.pvp.find((p) => p.cap === cap);
         best = { ...copyBrief(pick), iv_rank: pEntry?.iv_rank };
-        if (eligible.length > 0 && pEntry && pEntry.iv_rank <= 250) {
+        if (eligible.length > 0 && pEntry && (cap >= 10000 || pEntry.iv_rank <= 50)) {
           status = 'HAVE';
           why.push(`Have eligible build (IV rank #${pEntry.iv_rank}).`);
         } else {
           status = 'UPGRADE';
-          why.push('Owned copy is over cap or low PvP IV rank.');
+          why.push('Owned copy is over cap or outside top 50 PvP IV rank.');
         }
       } else if (rev.length > 0) {
         best = copyBrief(rev[0]);
@@ -1278,7 +1283,13 @@ function buildWishlistMax(
   const out: ReportJson['grade']['wishlist_all']['max'] = {};
   for (const t of MAX_BATTLE_TYPES) {
     const mt = maxTeams.find((x) => x.type === t);
-    const team = (mt?.entries || []).map((e) => ({ name: e.name, dps: e.dps, iv: e.iv }));
+    const team = (mt?.entries || []).map((e) => ({
+      id: e.id,
+      name: e.name,
+      cp: e.cp,
+      dps: e.dps,
+      iv: e.iv,
+    }));
     const bestHave = team[0]?.dps ?? 0;
     const topDps = Math.round(refDps(dex, dex.maxRankings, t, false) * 100) / 100 || 1;
     const ranked = dex.maxRankings.get(t) || [];

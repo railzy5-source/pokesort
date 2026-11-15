@@ -1528,7 +1528,7 @@ export interface ReportJson {
       max: Record<string, {
         type: string;
         rows: WishlistRow[];
-        team: { name: string; dps: number; iv: string }[];
+        team: { id?: string; name: string; cp: number; dps: number; iv: string }[];
         best_have: number;
         top_dps: number;
         have_pct: number;
@@ -1612,7 +1612,7 @@ export interface ReportJson {
         types: {
           type: string;
           covered: boolean;
-          team: { name: string; dps: number; iv: string }[];
+          team: { id?: string; name: string; cp: number; dps: number; iv: string }[];
           have_pct: number;
           wish: WishlistRow[];
           all: WishlistRow[];
@@ -1878,6 +1878,8 @@ export interface TagAuditMismatch {
   issue: string;
   suggestion: string;
   search: string;
+  tags?: string[];
+  recommended_tag?: string;
 }
 
 export interface TagAuditData {

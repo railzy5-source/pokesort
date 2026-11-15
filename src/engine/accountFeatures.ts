@@ -929,6 +929,7 @@ export function buildTagAudit(mons: MonModel[]): TagAuditData {
         issue: conflict,
         suggestion,
         search,
+        tags: [...m.mon_tags],
       });
     }
 
@@ -955,6 +956,7 @@ export function buildTagAudit(mons: MonModel[]): TagAuditData {
               issue: `Tagged "${t}" but a better IV copy (CP ${winner.cp}, ${ivStr(winner)}) already holds BUILD_PVP`,
               suggestion: `Untag "${t}" in-game to avoid building an inferior duplicate.`,
               search,
+              tags: [...m.mon_tags],
             });
           }
         }
@@ -971,7 +973,8 @@ export function buildTagAudit(mons: MonModel[]): TagAuditData {
     ) {
       untaggedBuilds++;
       untaggedBuildMons.push(m);
-      if (mismatches.filter((x) => x.category === 'untagged_build').length < 30) {
+      const recTag = m.verdict === 'BUILD_PVP' ? 'PvP' : m.verdict.replace('BUILD_', '');
+      if (mismatches.filter((x) => x.category === 'untagged_build').length < 60) {
         mismatches.push({
           id: m.uid,
           species: spLabel,
@@ -980,8 +983,10 @@ export function buildTagAudit(mons: MonModel[]): TagAuditData {
           verdict: m.verdict,
           category: 'untagged_build',
           issue: `${m.verdict} (${m.role}) has no in-game tag`,
-          suggestion: `Tag this in-game under "${m.verdict === 'BUILD_PVP' ? 'PvP' : m.verdict.replace('BUILD_', '')}".`,
+          suggestion: `Tag this in-game under "${recTag}".`,
           search,
+          tags: [],
+          recommended_tag: recTag,
         });
       }
     }
@@ -995,7 +1000,7 @@ export function buildTagAudit(mons: MonModel[]): TagAuditData {
     wrong_cap_count: wrongCap,
     transfer_tagged_count: transferTagged,
     untagged_build_count: untaggedBuilds,
-    mismatches: mismatches.slice(0, 80),
+    mismatches: mismatches.slice(0, 200),
     untagged_build_search: untaggedBuildQuery,
     transfer_tagged_search: transferTaggedQuery,
   };

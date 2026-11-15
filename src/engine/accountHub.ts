@@ -709,11 +709,14 @@ export function buildMedalsHub(rawData: Record<string, unknown>): MedalsHubData 
   const player = (accRaw.player || rawData.player || {}) as Record<string, unknown>;
   const hasPlayerData = Object.keys(player).length > 0;
 
-  const rawTypeArr = Array.isArray(player.pokemonCaughtByType)
+  const rawTypeArr = Array.isArray(player.numPokemonCaughtByType)
+    ? (player.numPokemonCaughtByType as number[])
+    : Array.isArray(player.pokemonCaughtByType)
     ? (player.pokemonCaughtByType as number[])
     : [];
+  const typeOffset = rawTypeArr.length >= 19 ? 1 : 0;
   const type_medals: TypeCatchMedal[] = CANONICAL_TYPE_ORDER.map((type, idx) => {
-    const count = Number(rawTypeArr[idx] ?? 0);
+    const count = Number(rawTypeArr[idx + typeOffset] ?? 0);
     const tierInfo = calcMedalTier(count, [10, 50, 200, 2500]);
     return {
       type,
@@ -757,7 +760,7 @@ export function buildMedalsHub(rawData: Record<string, unknown>): MedalsHubData 
   const achievements: AchievementMedal[] = [
     makeAch('collector', 'Collector (Caught)', 'Catch & Explore', Number(player.numPokemonCaptured ?? 0), [30, 500, 2000, 50000]),
     makeAch('jogger', 'Jogger (Walked)', 'Catch & Explore', kmWalked, [10, 100, 1000, 10000], 'km'),
-    makeAch('backpacker', 'Backpacker (Stops)', 'Catch & Explore', Number(player.pokestopsVisited ?? 0), [100, 1000, 2000, 50000]),
+    makeAch('backpacker', 'Backpacker (Stops)', 'Catch & Explore', Number(player.pokeStopVisits ?? player.pokestopsVisited ?? 0), [100, 1000, 2000, 50000]),
     makeAch('sightseer', 'Sightseer (Unique Stops)', 'Catch & Explore', Number(player.uniquePokestopsVisited ?? 0), [10, 100, 1000, 2000]),
     makeAch('breeder', 'Breeder (Eggs)', 'Catch & Explore', Number(player.numEggsHatched ?? 0), [10, 100, 1000, 2500]),
     makeAch('scientist', 'Scientist (Evolutions)', 'Catch & Explore', Number(player.numEvolutions ?? 0), [3, 20, 200, 2000]),
