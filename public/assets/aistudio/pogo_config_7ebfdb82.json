@@ -1,0 +1,401 @@
+{
+  "_readme": [
+    "Every threshold the sorter uses lives here. Missing keys fall back to the",
+    "defaults baked into pogo_sorter.py, so you can delete anything you are",
+    "happy with; editing a value here always wins.",
+    "Guarantee: BUILD_<role> is only emitted when the mon passes that role's gate.",
+    "Borderline mons become REVIEW (kept, not transferred, not built).",
+    "Accuracy pass: see the changelog at the top of pogo_sorter.py for the new keys.",
+    "",
+    "2026-10-25 Grok fixes:",
+    "  - IV product matches PvPoke (floor HP only; atk/def unfloored).",
+    "  - PvP teams no longer force hard disjoint membership.",
+    "  - Low-value protections defaulted off; critical ones stay on.",
+    "",
+    "2026-10-27 changes:",
+    "  - last_look: extra check block at the top of transfer_list.txt.",
+    "  - review_triage: sorts the REVIEW pile (advice only, never changes a verdict).",
+    "  - power_up_priority: top_n / max_per_species / dust_budget (0 = off) / do_not_invest_rows.",
+    "  - pvp_teams.cup_max_shared_members: cup teams must differ.",
+    "",
+    "2026-10-27 (later): review_triage.confirmed_transfer_ids = in-game ids you approved for transfer.",
+    "  A REVIEW mon in that list becomes TRANSFER; anything with a keep reason or a raid/Max role is skipped.",
+    "",
+    "2026-10-28 raid moveset advice (never changes a verdict):",
+    "  - raid.moveset_assume_boost: pick raid attacker moves as if a Mega of their type is active",
+    "    (boost_same_type x1.3 for moves of that type, boost_other x1.1 for the rest).",
+    "  - raid.tm_min_gain_pct / elite_tm_min_gain_pct: only suggest a TM when the best pair beats",
+    "    what the mon can already do by at least this many percent (elite TMs need the bigger gap).",
+    "",
+    "2026-10-28 coverage first:",
+    "  - coverage.coverage_first: while any raid type has fewer than coverage.min_attackers usable",
+    "    attackers, Raid and Mega builds target coverage.build_target_level (0 = coverage.min_level, 25)",
+    "    instead of raid/mega.power_level (40). Gap types are queued first, cheapest first.",
+    "    Once every type is covered the normal power_level targets come back. Set false to turn off.",
+    "  - coverage.pick_tie_pct: each open spot goes to the STRONGEST attacker (finished-form raid DPS);",
+    "    candidates within this percent of the best count as equal and the cheaper one wins.",
+    "  - coverage.defer_master_builds: while coverage-first is on, Master League projects (power to L50)",
+    "    are listed at the bottom of build_list.txt. Order only: no verdict changes.",
+    "",
+    "2026-11-02 daily briefing (the old pogo_report.py, now built into the sorter; advice only, never changes a verdict):",
+    "  - Today tab / briefing.txt: live + upcoming events checked against YOUR teams, wishlist, build queue and transfer list.",
+    "  - briefing.days: how far ahead to look. cache_hours: how long the event feed is reused. far_off_days: tickets further",
+    "    away than this go in 'skip'. storage_warn_pct: when the clear-storage card appears.",
+    "  - CLI: --no-briefing (skip it), --days N, --now \"2026-11-02 09:00\" (replay a day).",
+    "  - Needs no key. Offline with no cached feed still gives the account-only advice.",
+    "",
+    "2026-11-02 single-unit rule: a Pokemon in REVIEW or TRANSFER is never recommended anywhere (teams, squads, Megas, buddy,",
+    "  tanks, power-up lists, wishlist 'HAVE'). A REVIEW copy shows as DECIDE on the wishlist. The self-check enforces this every run.",
+    "  max_battle.extra_dynamax_dex: dex numbers to add when new Pokemon get Dynamax. extra_gigantamax: {dex: type} for new G-Max.",
+    "  The sorter also trusts any species your own save holds as Dynamax (and its evolutions).",
+    "",
+    "2026-11-02 placement: every Pokemon gets ONE home type (raid and Max), chosen globally so coverage is as good as possible:",
+    "  coverage first (coverage.min_attackers per type; usable Pokemon first, then ones you would level; important types first),",
+    "  then everyone else takes their best home within raid.keep_per_type + reserve_keep per type. TMs assumed. A Mega-capable",
+    "  Pokemon counts as an attacker OR as the Mega, never both. The viewer's Placement box lists every Pokemon that was re-homed.",
+    "",
+    "2026-11-02 Max Battles: damage = Attack x Max Move power (250/300/350, G-Max 350/400/450) x STAB, ranked at Max Move level 3.",
+    "  Your real Max Move levels come from the export. max_battle.tank_picks / healer_picks: how many bulk-ranked Dynamax tanks and",
+    "  healers to list (they need Max Guard / Max Spirit unlocked to be usable). Advice only; no verdict depends on them.",
+    "",
+    "2026-11-02 raid.bulk_weight: 1 = rank raid/Mega attackers by ER-style effective DPS (damage x (HP*Def)^(1/4), the",
+    "  GamePress/Pokebattler community method, Shadow pays its -1/6 Defense). 0 = damage only (old behaviour). Max Battles stay damage-only.",
+    "",
+    "2026-11-02 settings: pvp.leagues (1500 Great, 2500 Ultra, 10000 Master) and pvp.cups (little, fantasy) choose what the",
+    "  sorter plans for. Anything left out gets no builds, teams, wishlist or protection and drops out of the grade.",
+    "  The viewer's Settings tab edits these and downloads a new pogo_config.json for you to save here and re-run.",
+    "2026-11-04 decisive mode: tighter PvP BUILD gates (species top 50/40/25, IV rank 80); search strings use year+!shiny; raid Mega = strongest owned booster; weak redundant Megas demoted."
+  ],
+  "protect_iv_pct": 92,
+  "protect_hundo": true,
+  "protect_shadow_purified": false,
+  "protect_purified": true,
+  "protect_species_dex": [
+    150,
+    249,
+    250,
+    382,
+    383,
+    384,
+    483,
+    484,
+    487,
+    643,
+    644,
+    646,
+    716,
+    717,
+    718,
+    791,
+    792,
+    800,
+    888,
+    889,
+    890
+  ],
+  "protect_favorite": true,
+  "protect_lucky": true,
+  "protect_costume": true,
+  "protect_shiny": true,
+  "protect_location_card": false,
+  "protect_origin_events": false,
+  "protect_gofest_2026": false,
+  "protect_3rd_move": false,
+  "protect_elite_move_holders": true,
+  "protect_high_upgrades": false,
+  "upgrades_keep_threshold": 20,
+  "protect_best_buddy": true,
+  "protect_top_pvp_iv": true,
+  "protect_top_pvp_iv_rank": 10,
+  "protect_top_pvp_iv_leagues": [
+    "1500",
+    "2500"
+  ],
+  "protect_top_pvp_iv_cups": true,
+  "protect_top_pvp_iv_min_cap_fraction": 0.95,
+  "protect_high_buddy_km": false,
+  "buddy_km_keep_threshold": 100,
+  "best_buddy_km_threshold": 50,
+  "protect_deployed": true,
+  "protect_tagged": false,
+  "protect_iv_scope": "best_per_species",
+  "iv_protect_max_per_species": 2,
+  "pve_model": {
+    "enabled": true
+  },
+  "protect_mega_capable": true,
+  "protect_currently_mega": true,
+  "protect_super_mega": true,
+  "super_mega_protect_level": 1,
+  "protect_dynamax": true,
+  "protect_gigantamax": true,
+  "keep_copies": 2,
+  "power_level_floor": 25,
+  "pvp": {
+    "leagues": [
+      "1500"
+    ],
+    "cups": [
+      "fantasy"
+    ],
+    "keep_species_top": {
+      "1500": 40,
+      "2500": 25,
+      "10000": 20
+    },
+    "keep_iv_rank": 50,
+    "maybe_species_top": {
+      "1500": 70,
+      "2500": 50,
+      "10000": 40
+    },
+    "maybe_iv_rank": 120,
+    "relevant_species_top": {
+      "1500": 150,
+      "2500": 150,
+      "10000": 100
+    },
+    "prefer_shadow_rankings": true,
+    "builds_per_species_league": {
+      "1500": 1,
+      "2500": 1,
+      "10000": 1
+    },
+    "master_min_iv_pct": 93,
+    "min_composite": 1220
+  },
+  "raid": {
+    "top_n_species": 50,
+    "keep_per_type": 6,
+    "power_level": 40,
+    "min_atk_iv": 12,
+    "min_atk_iv_for_shadow": 12,
+    "min_dps_pct": 75,
+    "min_dps_pct_of_best_of_type": 55,
+    "bulk_weight": 1,
+    "min_level": 20,
+    "prefer_shadow": true,
+    "shadow_dps_bonus": 1.2,
+    "type_coverage_min": 3,
+    "suggest_movesets": true,
+    "reserve_keep": 2,
+    "min_iv_pct": 60,
+    "iv_pct_slack": 5,
+    "moveset_assume_boost": true,
+    "boost_same_type": 1.3,
+    "boost_other": 1.1,
+    "tm_min_gain_pct": 5,
+    "elite_tm_min_gain_pct": 10
+  },
+  "mega": {
+    "power_level": 40,
+    "min_iv_pct": 82,
+    "require_released": true,
+    "require_raid_relevance": false,
+    "min_dps_pct_of_type": 60,
+    "recommend_boost_type": true,
+    "top_n_for_boost": 5,
+    "keep_per_family": 1,
+    "keep_per_type": 3,
+    "require_dps_floor": true
+  },
+  "max_battle": {
+    "enabled": true,
+    "extra_dynamax_dex": [],
+    "extra_gigantamax": {},
+    "top_n_species": 50,
+    "keep_per_type": 4,
+    "power_level": 40,
+    "min_atk_iv": 12,
+    "min_dps_pct": 70,
+    "min_dps_pct_of_best_of_type": 50,
+    "min_level": 20,
+    "prefer_gigantamax": true,
+    "reserve_keep": 2,
+    "note": "Max Battle DPS is an approximation: Max Move type is taken from the Fast Attack type; Max Guard/Max Spirit and Max Move levels are not modelled."
+  },
+  "gym": {
+    "defenders": [
+      "blissey",
+      "chansey",
+      "snorlax",
+      "wobbuffet",
+      "slaking",
+      "togekiss",
+      "umbreon",
+      "drifblim",
+      "gyarados",
+      "milotic",
+      "metagross",
+      "aggron"
+    ],
+    "power_level": 40,
+    "min_iv_pct": 70,
+    "max_per_species": 3,
+    "allow_shadow": false
+  },
+  "pvp_teams": {
+    "enabled": true,
+    "top_n": 5,
+    "species_rank_max": 200,
+    "iv_rank_max": 300,
+    "require_distinct_types": true,
+    "cohesion": {
+      "enabled": true,
+      "threat_count": 40,
+      "max_pool": 40,
+      "hole_min_victims": 2,
+      "weights": {
+        "coverage": 0.38,
+        "holes": 0.18,
+        "roles": 0.14,
+        "consistency": 0.1,
+        "bulk": 0.07,
+        "backup": 0.08,
+        "typing": 0.05
+      },
+      "grades": {
+        "A": 90,
+        "B": 80,
+        "C": 70,
+        "D": 60
+      }
+    },
+    "cup_max_shared_members": 1,
+    "league_max_shared_members": 1
+  },
+  "power_up_priority": {
+    "iv_rank_cutoff": 500,
+    "do_not_invest_iv_rank": 500,
+    "max_rows": 40,
+    "top_n": 12,
+    "max_per_species": 1,
+    "dust_budget": 0,
+    "do_not_invest_rows": 10
+  },
+  "coverage": {
+    "min_level": 25,
+    "min_attackers": 3,
+    "coverage_first": true,
+    "build_target_level": 0,
+    "pick_tie_pct": 5,
+    "defer_master_builds": true
+  },
+  "review": {
+    "atk_iv_slack": 1,
+    "dps_slack_pct": 5,
+    "level_slack": 10,
+    "gym_iv_slack": 5,
+    "gym_min_cp": 1500
+  },
+  "readiness": {
+    "ready_min_known": 2
+  },
+  "age_keep_years": [],
+  "age_keep_if_iv_pct": {},
+  "age_maybe_years": [],
+  "age_maybe_if_iv_pct": {},
+  "variant_rules": {
+    "costume": {
+      "key": [
+        "dex",
+        "costume"
+      ],
+      "trade_key": [
+        "dex",
+        "costume"
+      ],
+      "keep": 2,
+      "trade": 0,
+      "quality": "iv_pct"
+    },
+    "shiny": {
+      "key": [
+        "dex",
+        "form"
+      ],
+      "trade_key": [
+        "dex",
+        "form"
+      ],
+      "keep": 2,
+      "trade": 0,
+      "quality": "iv_pct"
+    },
+    "legendary": {
+      "key": [
+        "dex",
+        "form"
+      ],
+      "trade_key": [
+        "dex",
+        "form"
+      ],
+      "keep": 2,
+      "trade": 2,
+      "quality": "iv_pct"
+    },
+    "lucky_age": {
+      "key": [
+        "dex",
+        "form"
+      ],
+      "trade_key": [
+        "dex",
+        "form"
+      ],
+      "keep": 1,
+      "trade": 3,
+      "quality": "iv_pct"
+    },
+    "form": {
+      "key": [
+        "dex",
+        "form"
+      ],
+      "trade_key": [
+        "dex",
+        "form"
+      ],
+      "keep": 1,
+      "trade": 1,
+      "quality": "iv_pct"
+    }
+  },
+  "safeguards": {
+    "never_transfer_if_in_team": true,
+    "never_transfer_if_in_build": true,
+    "never_transfer_if_in_raid_team": true,
+    "never_transfer_if_in_max_team": true,
+    "warn_high_cp": 2500,
+    "warn_high_level": 35
+  },
+  "last_look": {
+    "enabled": true,
+    "iv_pct": 85,
+    "level_above": 25
+  },
+  "review_triage": {
+    "enabled": true,
+    "keep_iv_pct": 90,
+    "keep_pvp_iv_rank": 25,
+    "keep_level_above": 25,
+    "transfer_iv_pct": 70,
+    "confirmed_transfer_ids": [
+      "16558864365298872355",
+      "340243607262804361",
+      "13826324756304867192",
+      "17282108929916289356",
+      "14713857646605065306",
+      "10012838949343229947",
+      "16982547223220537413"
+    ]
+  },
+  "briefing": {
+    "enabled": true,
+    "days": 14,
+    "cache_hours": 3,
+    "far_off_days": 60,
+    "storage_warn_pct": 80
+  }
+}
