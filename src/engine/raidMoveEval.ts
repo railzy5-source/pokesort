@@ -29,6 +29,7 @@ import {
   type Dex,
   type PrepCharged,
   type PrepFast,
+  fastOnlyDpsPerAtk,
 } from './pveModel';
 import type {
   BagResources,
@@ -133,6 +134,8 @@ interface Plan {
   needsRegular: boolean;
   /** Charged route impossible because the only candidate slot holds an unremovable Frustration. */
   frustrationBlocked: boolean;
+  /** Fast Attack only (no Charged Move needed). High-level raids are mostly fought with Fast Attacks. */
+  fastOnly?: boolean;
 }
 
 const up = (s: string) => String(s || '').toUpperCase();
@@ -201,7 +204,8 @@ function poolsFor(sp: PvPokeSpecies, mon: MonModel): Pools {
   };
 }
 
-const movesetLabel = (fast: string, charged: string) => `${moveLabel(fast)} / ${moveLabel(charged)}`;
+const movesetLabel = (fast: string, charged: string) =>
+  charged ? `${moveLabel(fast)} / ${moveLabel(charged)}` : `${moveLabel(fast)} (Fast Attack)`;
 
 function typeOf(dex: Dex, ident: string, fast: boolean): string {
   const k = fast ? `${ident}_FAST` : ident;
@@ -273,6 +277,8 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
   const regularFastPool = pools.fast.filter((m) => !pools.elite.has(m) && m !== knownFast?.ident);
   const regularChargedPool = pools.charged.filter((m) => !pools.elite.has(m) && !knownIdents.has(m));
   const regularChargedHits = regularChargedPool.filter((m) => typeOf(dex, m, false) === atype).length;
+  // A random Fast TM result is good enough when it is ANY Fast Attack of the team's type.
+  const regularFastHits = regularFastPool.filter((m) => typeOf(dex, m, true) === atype).length;
 
   // ---- Which Charged slot would a TM overwrite? -------------------------------------------------------
   // A dead Frustration slot can only be overwritten when the user says it is removable (event / purified / done).
@@ -327,6 +333,32 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
       });
     }
   }
+
+  // Fast-only plans: with an on-type Fast Attack a Pokémon is useful in high-level raids even without a matching
+  // Charged Move. Charged Move TMs are then only an optional upgrade.
+  const NO_CHARGED: Step = { kind: 'charged', ident: '', label: '', route: 'known', replaces: null, of: 1, hit: 1 };
+  for (const [fid, fm] of fastById) {
+    if (fm.type !== atype) continue;
+    const fastKnown = fid === knownFast?.ident;
+    const fastElite = pools.elite.has(fid);
+    plans.push({
+      fast: {
+        kind: 'fast',
+        ident: fid,
+        label: moveLabel(fid),
+        route: fastKnown ? 'known' : fastElite ? 'elite_tm' : 'tm',
+        replaces: fastKnown ? null : knownFast,
+        of: regularFastPool.length || 1,
+        hit: regularFastHits || 1,
+      },
+      charged: NO_CHARGED,
+      dps: atk * bulk * fastOnlyDpsPerAtk(fm, attackerTypes, atype),
+      needsElite: !fastKnown && fastElite,
+      needsRegular: !fastKnown && !fastElite,
+      frustrationBlocked: false,
+      fastOnly: true,
+    });
+  }
   if (plans.length === 0) return null;
 
   const currentMoveset = known.map((k) => k.label).join(' / ') || '—';
@@ -348,7 +380,10 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
       if (p.fast.route === 'elite_tm') {
         lines.push(`${from}${p.fast.label} (Elite Fast TM)`);
       } else {
-        const o = p.fast.of <= 1 ? 'guaranteed' : `random re-roll · 1 in ${p.fast.of}`;
+        const o =
+          p.fast.of <= 1 || p.fast.hit >= p.fast.of
+            ? 'guaranteed'
+            : `random re-roll · ${p.fast.hit} of ${p.fast.of} outcomes give a ${atype} Fast Attack`;
         lines.push(`${from}${p.fast.label} (Fast TM, ${o})`);
       }
     }
@@ -438,11 +473,18 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
   };
 
   // ---------- 1) READY: best set made only of moves the Pokémon already knows --------------------------
-  const readyPlans = plans.filter((p) => cost(p) === 0).sort(byDps);
+  // The Fast Attack decides readiness: it has to be of the team's type (when this species can have one at all).
+  const onTypeFastExists = Array.from(fastById.values()).some((f) => f.type === atype);
+  const fastIsOnType = (p: Plan) => fastById.get(p.fast.ident)?.type === atype;
+  const readyPlans = plans.filter((p) => cost(p) === 0 && (!onTypeFastExists || fastIsOnType(p))).sort(byDps);
   if (readyPlans.length > 0 && !evolveFirst && !unreadable) {
     const best = readyPlans[0];
     // Optional upgrade: would a TM be worth it?
-    const regular = plans.filter((p) => !p.needsElite && !p.frustrationBlocked && cost(p) > 0).sort(byDps)[0];
+    // A Pokémon that is ready keeps its Fast Attack: a random Fast TM could lose it. Charged Move TMs and guaranteed
+    // Elite TMs are the optional upgrades.
+    const regular = plans
+      .filter((p) => !p.needsElite && !p.frustrationBlocked && cost(p) > 0 && p.fast.route === 'known')
+      .sort(byDps)[0];
     const elite = plans.filter((p) => p.needsElite && !p.frustrationBlocked).sort(byDps)[0];
     let hint = '';
     if (regular && regular.dps > best.dps * (1 + tmMinGain / 100)) {
@@ -469,6 +511,38 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
   }
   const dead = knownCharged.find((k) => k.dead);
 
+  // The ONLY thing that blocks a raider is a missing on-type Fast Attack. Any Charged Move the Pokémon already knows counts
+  // toward the DPS; Charged TMs are shown as an optional upgrade.
+  const fastFix = feasible.filter((p) => p.charged.route === 'known' && (!onTypeFastExists || fastIsOnType(p)));
+  const fastFixRegular = fastFix.filter((p) => !p.needsElite).sort(byDps);
+  const fastFixElite = fastFix.filter((p) => p.needsElite).sort(byDps)[0];
+  const optionalCharged = (target: Plan): string => {
+    const best = plans
+      .filter(
+        (p) =>
+          !p.fastOnly && p.fast.ident === target.fast.ident && p.charged.route !== 'known' && !p.needsElite && !p.frustrationBlocked,
+      )
+      .sort(byDps)[0];
+    if (!best || best.dps <= target.dps * (1 + tmMinGain / 100)) return '';
+    const asKnownFast = { ...best, fast: { ...best.fast, route: 'known' as Route } };
+    return `Optional: ${actionsFor(asKnownFast).join('; ')} (+${Math.round((100 * (best.dps - target.dps)) / target.dps)}% DPS)`;
+  };
+  if (fastFixRegular.length > 0) {
+    const target = fastFixRegular[0];
+    const lines = [...prefix, ...actionsFor(target)];
+    return finish('needs_tm', null, target, 'after_tm', lines, optionalCharged(target));
+  }
+  if (fastFixElite) {
+    const lines = [...prefix, ...actionsFor(fastFixElite)];
+    const haveElite = !tmBag.known || bagOk(fastFixElite);
+    if (haveElite) return finish('needs_tm', null, fastFixElite, 'after_tm', lines, optionalCharged(fastFixElite));
+    return finish('blocked', 'needs_elite_tm', fastFixElite, 'after_tm', [
+      ...lines,
+      'Cannot be fixed without an Elite Fast TM (or an event that offers one)',
+    ]);
+  }
+
+  // No on-type Fast Attack exists for this species: fall back to needing an on-type Charged Move.
   if (regularOnly.length > 0) {
     const target = trimFastSwap(regularOnly[0]);
     const useElite = eliteBest && eliteBest.dps > target.dps * (1 + eliteMinGain / 100) ? eliteBest : undefined;

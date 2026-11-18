@@ -237,6 +237,21 @@ export function pairDpsPerAtk(
   return (n * fmDmg + cmDmg) / cycleTime;
 }
 
+/**
+ * DPS per point of Attack using ONLY the Fast Attack (no Charged Move). High-level raids are mostly fought on Fast
+ * Attacks, so this is what a Pokémon without a matching Charged Move really does.
+ */
+export function fastOnlyDpsPerAtk(
+  fm: PrepFast,
+  attackerTypes: Set<string>,
+  targetType: string,
+  fastBoost = 1.0,
+): number {
+  if (!(fm.dur > 0)) return 0;
+  const stab = attackerTypes.has(fm.type) ? STAB : 1.0;
+  return (0.5 * fm.power * stab * targetEffectiveness(fm.type, targetType) * fastBoost) / DEFENDER_DEF / fm.dur;
+}
+
 export function bestDpsPerAtk(
   pve: PveContext,
   attackerTypes: Set<string>,
@@ -569,6 +584,9 @@ export function readinessFields(
     out.status_reason = 'no species data';
     return { fields: out, meta: { fast: false, charged: false } };
   }
+  // Raids are mostly won on Fast Attacks, so for raid builds the Fast Attack is what makes a Pokémon "ready".
+  // Charged Move TMs are shown as optional upgrades instead of blockers.
+  const fastOnlyRaid = verdict === 'BUILD_RAID' || verdict === 'BUILD_MEGA';
   const SINGLE_CHARGED_ONLY_DEX = new Set([132, 201, 202, 235, 360]);
   const parts = mon.moveset
     ? mon.moveset
@@ -577,7 +595,7 @@ export function readinessFields(
         .filter(Boolean)
     : [];
   const wantsSecondCharged =
-    parts.length >= 3 || (verdict === 'BUILD_PVP' && !SINGLE_CHARGED_ONLY_DEX.has(mon.dex));
+    !fastOnlyRaid && (parts.length >= 3 || (verdict === 'BUILD_PVP' && !SINGLE_CHARGED_ONLY_DEX.has(mon.dex)));
   const secondSlotGap = wantsSecondCharged && !mon.has_third_move;
   out.needs_second_move = secondSlotGap;
 
@@ -658,7 +676,38 @@ export function readinessFields(
   const unlockNote = secondSlotGap ? '2nd charged move not unlocked' : '';
   const tmText = out.needs_typed.map(formatTmItem).join(' · ');
 
-  if (eliteGap.length > 0) {
+  if (fastOnlyRaid && parts.length > 0) {
+    // Ready as soon as it has an on-type Fast Attack (the suggested one, or any other of the team's type).
+    const wantType = String((verdict === 'BUILD_MEGA' ? mon.mega_type : mon.raid_type) || '').toLowerCase();
+    const haveFastType = fastMoveType(pve, mon);
+    const fastPart = parts[0];
+    const fastOk = have.has(fastPart.toLowerCase()) || Boolean(wantType && haveFastType && haveFastType === wantType);
+    const chargedMissing = out.needs_typed.filter((t) => t.slot === 'charged');
+    const optionalText = chargedMissing.map(formatTmItem).join(' · ');
+    if (fastOk) {
+      out.build_status = 'Ready';
+      out.needs_moves = [];
+      out.needs_elite_moves = [];
+      out.needs_typed = [];
+      out.elite_tm = false;
+      out.needs_second_move = false;
+      out.status_reason = optionalText
+        ? `Ready on its Fast Attack · optional TM: ${optionalText}`
+        : 'Ready on its Fast Attack';
+    } else {
+      const fastNeed = out.needs_typed.filter((t) => t.slot === 'fast');
+      const fastElite = fastNeed.some((t) => t.elite);
+      out.needs_typed = fastNeed.length > 0 ? fastNeed : out.needs_typed.slice(0, 1);
+      out.needs_moves = out.needs_typed.filter((t) => !t.elite).map((t) => t.name);
+      out.needs_elite_moves = out.needs_typed.filter((t) => t.elite).map((t) => t.name);
+      out.elite_tm = fastElite;
+      out.needs_second_move = false;
+      out.build_status = fastElite ? 'Needs Elite TM' : 'Needs TM';
+      out.status_reason = [out.needs_typed.map(formatTmItem).join(' · '), optionalText ? `optional TM: ${optionalText}` : '']
+        .filter(Boolean)
+        .join(' · ');
+    }
+  } else if (eliteGap.length > 0) {
     out.build_status = 'Needs Elite TM';
     out.status_reason = [unlockNote, tmText].filter(Boolean).join(' · ');
   } else if (secondSlotGap) {
