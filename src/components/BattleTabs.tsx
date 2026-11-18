@@ -282,7 +282,7 @@ const RaidEntryNotes: React.FC<{ m: RaidTeamEntry }> = ({ m }) => {
           → {a}
         </div>
       ))}
-      {m.status === 'ready' && m.upgrade_hint && (
+      {m.upgrade_hint && (
         <div className="text-[11px] leading-snug text-slate-500">↑ {m.upgrade_hint}</div>
       )}
       {m.fast_lock_note && (
