@@ -860,6 +860,8 @@ export class Dex {
   spreadCache = new Map<string, SpreadTable | null>();
 
   raidRankings = new Map<string, [string, number][]>();
+  /** Set to "pokebattler" when live PB points are loaded into raidRankings. */
+  raidScoreSource: string = "internal";
   raidSets = new Map<string, [string | null, string | null]>();
   raidPos = new Map<string, Map<string, [number, number]>>();
 

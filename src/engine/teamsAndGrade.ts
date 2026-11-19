@@ -28,6 +28,7 @@ import {
   tmBagFrom,
   type RaidAssessment,
 } from './raidMoveEval';
+import { specimenPbScore, topRankingScore } from './pokebattlerRankings';
 import {
   auditSavedBattleParties,
   buildCombatant,
@@ -608,10 +609,15 @@ export function buildRaidTeams(
     cands: AttackerCand[];
   }
 
+  const usePb = (dex as any).raidScoreSource === 'pokebattler' ||
+    String((cfg.raid as any)?.ranking_source || '').toLowerCase() === 'pokebattler';
+
   const ctxs: TypeCtx[] = RAID_USEFUL_TYPES.map((atype) => {
     const megaCand = megaByType.get(atype) ?? null;
-    // DPS is vs a defender weak to `atype`, so the reference "best of type" is on the same scale.
-    const ref = refDps(dex, dex.raidRankings, atype, true) || 1;
+    // Reference = top ranking score (Pokébattler points when live, else formula refDps).
+    const ref = usePb
+      ? topRankingScore(dex.raidRankings, atype) || 1
+      : refDps(dex, dex.raidRankings, atype, true) || 1;
     const cands: AttackerCand[] = [];
     for (const m of mons) {
       // A Mega Pokémon belongs to exactly one team, so it is never also a regular attacker on another team.
@@ -624,12 +630,36 @@ export function buildRaidTeams(
         if (!sp) continue;
         const a = assessRaidMon({ mon: m, species: sp, dex, cfg, teamType: atype, tmBag });
         if (!a || a.dps <= 0) continue;
+
+        // Moveset quality vs PB "best moveset" assumption.
+        let movesetFactor = 1.0;
+        if (a.status === 'ready') movesetFactor = a.basis === 'current' ? 1.0 : 0.97;
+        else if (a.status === 'needs_tm') movesetFactor = a.tmInBag ? 0.88 : 0.72;
+        else if (a.status === 'blocked') movesetFactor = 0.35;
+        else movesetFactor = 0.6;
+
+        const speciesPts = hit[1]; // PB points or formula coeff
+        let score: number;
+        let displayDps: number;
+        if (usePb && speciesPts > 1) {
+          // Real ranking score from Pokébattler points, scaled to this specimen.
+          score = specimenPbScore(speciesPts, m.level, m.a, movesetFactor);
+          // Keep formula dps on assessment for TM hints; ranking uses score.
+          displayDps = score;
+        } else {
+          score = raidSlotOrderScore(m, a.dps, d);
+          displayDps = a.dps;
+        }
+
+        // Stash display score onto assessment so entry builder can show it
+        (a as any).rankScore = displayDps;
+
         const cand: AttackerCand = {
           mon: m,
           sid: d,
           a,
-          score: raidSlotOrderScore(m, a.dps, d),
-          pct: (100 * a.dps) / ref,
+          score,
+          pct: (100 * score) / (ref || 1),
           primary: m.raid_type === atype,
         };
         if (
@@ -704,29 +734,33 @@ export function buildRaidTeams(
     bumpSpecies(atype, c.sid);
   }
 
-  // Order inside each team: Pokémon that are ready now first, then build spots; each group strictly by DPS.
-  const byDps = (x: AttackerCand, y: AttackerCand) => y.a.dps - x.a.dps || y.score - x.score || y.mon.iv_pct - x.mon.iv_pct;
+  // Order inside each team: ready first, then by combat score (PB points when live, else formula DPS).
+  const byCombat = (x: AttackerCand, y: AttackerCand) =>
+    y.score - x.score || y.a.dps - x.a.dps || y.mon.iv_pct - x.mon.iv_pct;
   for (const ctx of ctxs) {
-    readyBy.get(ctx.atype)!.sort(byDps);
-    buildBy.get(ctx.atype)!.sort(byDps);
+    readyBy.get(ctx.atype)!.sort(byCombat);
+    buildBy.get(ctx.atype)!.sort(byCombat);
   }
 
   // ======================================================================
   // PASS 3 - "Could improve a team with a TM": ONLY Pokémon that are on no team, and whose DPS after the TM would beat the
   // weakest team spot of that type. Each such Pokémon is listed under ONE type (where it would be strongest).
   // ======================================================================
-  const teamFloorDps = new Map<string, number>();
+  const teamFloorScore = new Map<string, number>();
   for (const ctx of ctxs) {
     const placed = [...readyBy.get(ctx.atype)!, ...buildBy.get(ctx.atype)!];
     const teamSpots = placed.slice(0, teamCapNoMega(ctx));
-    // Open team spot = anything worth fixing can improve it
-    teamFloorDps.set(ctx.atype, teamSpots.length < teamCapNoMega(ctx) ? 0 : Math.min(...teamSpots.map((c) => c.a.dps)));
+    // Open team spot = anything worth fixing can improve it (compare combat score, not formula-only dps)
+    teamFloorScore.set(
+      ctx.atype,
+      teamSpots.length < teamCapNoMega(ctx) ? 0 : Math.min(...teamSpots.map((c) => c.score)),
+    );
   }
   const fixPairs: { atype: string; c: AttackerCand }[] = [];
   for (const ctx of ctxs) {
     for (const c of ctx.cands) {
       if (taken.has(c.mon.uid) || c.a.status === 'ready' || c.pct < spareFloor) continue;
-      if (c.a.dps <= (teamFloorDps.get(ctx.atype) ?? 0)) continue; // would not improve this team
+      if (c.score <= (teamFloorScore.get(ctx.atype) ?? 0)) continue; // would not improve this team
       fixPairs.push({ atype: ctx.atype, c });
     }
   }
@@ -817,8 +851,8 @@ export function buildRaidTeams(
     // Underneath: Pokémon on no team that a TM would turn into an upgrade for this one. TM in the bag first is NOT
     // considered here: the list is ordered by DPS after the fix.
     const fixList = fixBy.get(atype)!;
-    const fixable = fixList.filter((c) => c.a.status === 'needs_tm').sort(byDps).slice(0, 8);
-    const stuck = fixList.filter((c) => c.a.status === 'blocked').sort(byDps).slice(0, 4);
+    const fixable = fixList.filter((c) => c.a.status === 'needs_tm').sort(byCombat).slice(0, 8);
+    const stuck = fixList.filter((c) => c.a.status === 'blocked').sort(byCombat).slice(0, 4);
     const fixQueue = [...fixable, ...stuck].map((c) => raidEntryFrom(c, 'backup', 0, dex));
 
     const buildSpots = buildBy.get(atype)!.length;
@@ -858,7 +892,8 @@ function raidEntryFrom(
     name: evolveTo || displaySpecies(m),
     cp: m.cp,
     iv: ivStr(m),
-    dps: Math.round(c.a.dps * 100) / 100,
+    // Prefer Pokébattler-scaled rank score when present; else formula DPS.
+    dps: Math.round(Number((c.a as any).rankScore ?? c.a.dps) * 100) / 100,
     level: Math.round(m.level * 10) / 10,
     shadow: m.is_shadow,
     moveset: c.a.currentMoveset,

@@ -260,17 +260,17 @@ export async function loadPokebattlerTypeRankings(
 }
 
 /**
- * Apply external rankings onto a Dex-like object.
+ * Apply Pokébattler rankings as the live scoring source.
  *
- * Updates **raidPos** (species rank / top-N ordering) from Pokébattler points order.
- * Does **not** replace the numeric scores in raidRankings with PB points — those stay
- * as internal DPS-per-atk coefficients so refDps() and min_dps_pct gates remain valid.
- * The ranking *list* is re-ordered to match Pokébattler so iteration order is correct.
+ * raidRankings scores become PB **points** (higher = better).
+ * raidPos is 1-based rank from that list.
+ * Team builder / % of best should use these scores directly (not formula refDps).
  */
 export function applyExternalRaidRankings(
   target: {
     raidRankings: Map<string, [string, number][]>;
     raidPos: Map<string, Map<string, [number, number]>>;
+    raidScoreSource?: string;
   },
   external: TypeRankingMap,
   /** Only replace types that have data; keep internal for the rest. */
@@ -280,25 +280,12 @@ export function applyExternalRaidRankings(
   for (const [t, lst] of external.entries()) {
     if (!lst.length) continue;
 
+    // Full PB score list (points already sorted high → low)
+    target.raidRankings.set(t, lst.map(([sid, sc]) => [sid, sc]));
+
     const pos = new Map<string, [number, number]>();
     lst.forEach(([sid, sc], i) => pos.set(sid, [i + 1, sc]));
     target.raidPos.set(t, pos);
-
-    // Re-order formula list to PB order; keep formula coefficients as scores.
-    const internal = target.raidRankings.get(t) || [];
-    const scoreBySid = new Map(internal.map(([sid, sc]) => [sid, sc]));
-    const reordered: [string, number][] = [];
-    const seen = new Set<string>();
-    for (const [sid] of lst) {
-      if (seen.has(sid)) continue;
-      seen.add(sid);
-      reordered.push([sid, scoreBySid.get(sid) ?? 0]);
-    }
-    for (const [sid, sc] of internal) {
-      if (seen.has(sid)) continue;
-      reordered.push([sid, sc]);
-    }
-    target.raidRankings.set(t, reordered);
     applied++;
   }
   if (!merge) {
@@ -309,5 +296,41 @@ export function applyExternalRaidRankings(
       }
     }
   }
+  if (applied > 0) target.raidScoreSource = 'pokebattler';
   return applied;
+}
+
+/** Top score for a type from the ranking list (PB points or formula coeff). */
+export function topRankingScore(
+  rankings: Map<string, [string, number][]>,
+  atype: string,
+): number {
+  const rows = rankings.get(atype) || [];
+  return rows.length ? rows[0][1] : 0;
+}
+
+/**
+ * Scale a species-level Pokébattler points score to one specimen.
+ * PB ranks assume L40 15/15/15 best moveset — we adjust for level, ATK IV, and moveset readiness.
+ */
+export function specimenPbScore(
+  speciesPoints: number,
+  level: number,
+  atkIv: number,
+  movesetFactor: number,
+): number {
+  if (!(speciesPoints > 0)) return 0;
+  // CPM ratio vs L40 (approx table-free curve used widely in GO calcs)
+  const cpm = (lv: number) => {
+    // Piecewise-ish: close enough for ranking; L40 = 0.7903, L50 = 0.8403
+    if (lv >= 50) return 0.8403;
+    if (lv >= 40) return 0.7903 + (0.8403 - 0.7903) * ((lv - 40) / 10);
+    if (lv >= 30) return 0.7317 + (0.7903 - 0.7317) * ((lv - 30) / 10);
+    if (lv >= 20) return 0.5974 + (0.7317 - 0.5974) * ((lv - 20) / 10);
+    if (lv >= 15) return 0.5176 + (0.5974 - 0.5176) * ((lv - 15) / 5);
+    return 0.4 * Math.max(0.2, lv / 15);
+  };
+  const levelFactor = cpm(level) / cpm(40);
+  const atkFactor = (15 + Math.max(0, Math.min(15, atkIv))) / 30;
+  return speciesPoints * levelFactor * atkFactor * Math.max(0.05, movesetFactor);
 }
