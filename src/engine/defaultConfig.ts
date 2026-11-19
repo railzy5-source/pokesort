@@ -303,6 +303,10 @@ export const DEFAULT_CFG: PogoConfig = {
     // Ranking source for type attacker lists used by placement & team builder.
     // "pokebattler" = live Pokébattler points/estimator (recommended). "internal" = local formula.
     ranking_source: 'pokebattler' as 'pokebattler' | 'internal',
+    // Max copies of the same species on one type's team+spares (stops 6 identical Hydreigon).
+    max_same_species_per_type: 6,
+    // Hard floor for ready team slots. Below this level cannot take a team spot (L2 Galarian Articuno bug).
+    team_min_level: 20.0,
     // --- Raid team sorter (type-aware) ---
     // Frustration is a dead move slot. Set true ONLY while a Team GO Rocket Takeover window is open
     // (regular Charged TMs can remove Frustration then). Otherwise Shadows must be purified first.

@@ -483,13 +483,40 @@ function assignMegaSlots(
   dex: Dex,
   types: string[],
   takenUids: ReadonlySet<string> = new Set(),
+  cfg?: PogoConfig,
 ): Map<string, MegaTeamCandidate> {
-  const options: { type: string; cand: MegaTeamCandidate; rel: number }[] = [];
+  // Prefer types where the mega is already READY (no TM). Stops Mega Lucario with Force Palm /
+  // Aura Sphere being yanked to Steel, and Mega Mewtwo X with Psycho Cut / Psychic being forced
+  // onto Fighting when Psychic is free.
+  const tmBag = tmBagFrom(null);
+  const options: {
+    type: string;
+    cand: MegaTeamCandidate;
+    rel: number;
+    ready: number;
+    primaryType: number;
+  }[] = [];
   for (const atype of types) {
-    // A Pokémon that already holds a PvP or Max Battle team spot is not also used as a Mega.
     const list = findMegaCandidatesForType(mons, dex, atype).filter((c) => !takenUids.has(c.mon.uid));
     const best = Math.max(...list.map((c) => c.dps), 1e-9);
-    for (const cand of list) options.push({ type: atype, cand, rel: cand.dps / best });
+    for (const cand of list) {
+      const megaSp = dex.byId.get(cand.megaSid) || cand.mon.species;
+      let ready = 0;
+      if (megaSp && cfg) {
+        const a = assessRaidMon({
+          mon: cand.mon,
+          species: megaSp,
+          dex,
+          cfg,
+          teamType: atype,
+          tmBag,
+          isMega: true,
+        });
+        if (a && a.status === 'ready') ready = 1;
+      }
+      const primary = megaSp && (megaSp.types || [])[0]?.toLowerCase() === atype ? 1 : 0;
+      options.push({ type: atype, cand, rel: cand.dps / best, ready, primaryType: primary });
+    }
   }
   options.sort((a, b) => {
     const aUn = a.cand.unlocked ? 1 : 0;
@@ -497,7 +524,9 @@ function assignMegaSlots(
     return (
       bUn - aUn ||
       b.cand.mon.mega_level - a.cand.mon.mega_level ||
+      b.ready - a.ready ||
       b.rel - a.rel ||
+      b.primaryType - a.primaryType ||
       b.cand.mon.iv_pct - a.cand.mon.iv_pct
     );
   });
@@ -528,7 +557,9 @@ export function findMegaForType(mons: MonModel[], dex: Dex, atype: string): Raid
 function raidSlotOrderScore(m: MonModel, dps: number, targetSid: string | null): number {
   const isEvolved = Boolean(m.species && (!targetSid || targetSid === m.species.speciesId));
   const evoFactor = isEvolved ? 1.08 : 1.0;
-  const lvFactor = m.level >= 35 ? 1.08 : m.level >= 25 ? 1.04 : m.level >= 20 ? 1.0 : 0.90;
+  // Heavy penalty below L20 so underleveled glass (e.g. L2 Galarian Articuno) cannot outrank real attackers.
+  const lvFactor =
+    m.level >= 35 ? 1.08 : m.level >= 25 ? 1.04 : m.level >= 20 ? 1.0 : m.level >= 15 ? 0.55 : 0.25;
   return dps * evoFactor * lvFactor;
 }
 
@@ -546,9 +577,13 @@ export function buildRaidTeams(
   const spareFloor = Number(cfg.raid.spare_min_pct ?? 65);
   // How deep into the species ranking of a type an owned Pokémon is still considered.
   const speciesRankCap = Math.max(30, Number(cfg.raid.top_n_species ?? 20));
+  const teamMinLevel = Number((cfg.raid as any).team_min_level ?? cfg.raid.min_level ?? 20);
+  const maxSameSpecies = Math.max(1, Number((cfg.raid as any).max_same_species_per_type ?? 6));
+  const speciesKey = (sid: string) =>
+    sid.replace(/_shadow$|_purified$/i, '').replace(/_mega(_[xy])?$|_primal$/i, '');
 
   // One team per Mega Pokémon (see assignMegaSlots), decided once for all types.
-  const megaByType = assignMegaSlots(mons, dex, RAID_USEFUL_TYPES, takenUids);
+  const megaByType = assignMegaSlots(mons, dex, RAID_USEFUL_TYPES, takenUids, cfg);
   const allMegaUids = new Set(Array.from(megaByType.values()).map((c) => c.mon.uid));
   // A Pokémon that holds a Max Battle slot is not also a raid team attacker (it keeps its fast move for Max).
   const maxHolderUids = new Set(
@@ -620,21 +655,35 @@ export function buildRaidTeams(
   const buildBy = new Map<string, AttackerCand[]>(ctxs.map((c) => [c.atype, []]));
   const ctxOf = new Map(ctxs.map((c) => [c.atype, c]));
   const filled = (atype: string) => readyBy.get(atype)!.length + buildBy.get(atype)!.length;
+  // Per-type species counts for diversity (max_same_species_per_type).
+  const speciesCount = new Map<string, Map<string, number>>();
+  for (const t of RAID_USEFUL_TYPES) speciesCount.set(t, new Map());
+  const countSpecies = (atype: string, sid: string) => speciesCount.get(atype)!.get(speciesKey(sid)) || 0;
+  const bumpSpecies = (atype: string, sid: string) => {
+    const k = speciesKey(sid);
+    const m = speciesCount.get(atype)!;
+    m.set(k, (m.get(k) || 0) + 1);
+  };
   // Strongest (relative to the best of its type) first, so a Pokémon goes where it is closest to the best attacker there.
   const byRelative = (x: { c: AttackerCand }, y: { c: AttackerCand }) =>
     y.c.pct - x.c.pct || y.c.a.dps - x.c.a.dps || Number(y.c.primary) - Number(x.c.primary) || y.c.mon.iv_pct - x.c.mon.iv_pct;
 
   // 2a - Pokémon that can attack RIGHT NOW with the moves they know.
+  // Hard level floor: below team_min_level cannot take a team/reserve slot (fixes L2 Galarian Articuno).
+  // Species cap: at most max_same_species_per_type copies of the same species per type team.
   const readyPairs: { atype: string; c: AttackerCand }[] = [];
   for (const ctx of ctxs) for (const c of ctx.cands) if (c.a.status === 'ready') readyPairs.push({ atype: ctx.atype, c });
   readyPairs.sort(byRelative);
   for (const { atype, c } of readyPairs) {
     const ctx = ctxOf.get(atype)!;
     if (taken.has(c.mon.uid) || filled(atype) >= slotCap(ctx)) continue;
+    if (c.mon.level < teamMinLevel) continue;
+    if (countSpecies(atype, c.sid) >= maxSameSpecies) continue;
     // Reserve spots must clear the DPS floor so a weak off-meta Pokémon can't squat one.
     if (filled(atype) >= teamCapNoMega(ctx) && c.pct < spareFloor) continue;
     taken.add(c.mon.uid);
     readyBy.get(atype)!.push(c);
+    bumpSpecies(atype, c.sid);
   }
 
   // 2b - open spots: Pokémon that need a TM you already HAVE, on their home type only.
@@ -648,8 +697,11 @@ export function buildRaidTeams(
   for (const { atype, c } of buildPairs) {
     const ctx = ctxOf.get(atype)!;
     if (taken.has(c.mon.uid) || filled(atype) >= slotCap(ctx)) continue;
+    if (c.mon.level < teamMinLevel) continue;
+    if (countSpecies(atype, c.sid) >= maxSameSpecies) continue;
     taken.add(c.mon.uid);
     buildBy.get(atype)!.push(c);
+    bumpSpecies(atype, c.sid);
   }
 
   // Order inside each team: Pokémon that are ready now first, then build spots; each group strictly by DPS.
