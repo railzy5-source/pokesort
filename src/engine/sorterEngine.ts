@@ -19,6 +19,11 @@ import {
 } from './placementAndGates';
 import { parsePgsExport, resolveAccount, toMon } from './pgsParser';
 import {
+  applyExternalRaidRankings,
+  loadPokebattlerTypeRankings,
+  type TypeRankingMap,
+} from './pokebattlerRankings';
+import {
   createPveContext,
   createSizeContext,
   Dex,
@@ -45,6 +50,7 @@ export function analyzePgsExport(
   userCfg: UserConfigInput | null | undefined,
   remoteData: RemoteGameData,
   onStage?: (stage: string, pct: number) => void,
+  externalRaidRankings?: TypeRankingMap | null,
 ): ReportJson {
   onStage?.('Parsing PGSStats collection…', 15);
   const parsed = parsePgsExport(rawExport);
@@ -57,6 +63,20 @@ export function analyzePgsExport(
   const pveCtx = createPveContext(remoteData, cfg);
   const sizeCtx = createSizeContext(remoteData);
   const dex = new Dex(remoteData, cfg, pveCtx, caps, cups);
+
+  // Replace internal type rankings with Pokébattler when available (and requested).
+  const source = String((cfg.raid as any)?.ranking_source || 'pokebattler').toLowerCase();
+  if (source === 'pokebattler' && externalRaidRankings && externalRaidRankings.size > 0) {
+    const n = applyExternalRaidRankings(dex, externalRaidRankings, true);
+    onStage?.(
+      n > 0
+        ? `Raid rankings: Pokébattler (${n} types)`
+        : 'Raid rankings: internal (Pokébattler empty)',
+      38,
+    );
+  } else if (source === 'pokebattler') {
+    onStage?.('Raid rankings: internal (Pokébattler unavailable)', 38);
+  }
 
   const ORIGIN_MOVE_IDENTS = new Set([
     'ROAR_OF_TIME',
@@ -251,9 +271,30 @@ export async function runFullAnalysis(
         onProgress: options.onProgress,
       });
 
-  const report = analyzePgsExport(rawExport, userCfg, remote, (stage, pct) => {
-    options.onProgress?.({ stage, pct });
-  });
+  // Pokébattler type rankings (optional; falls back to internal formula rankings)
+  let pbRankings: TypeRankingMap | null = null;
+  const rankingSource = String((cfg.raid as any)?.ranking_source || 'pokebattler').toLowerCase();
+  if (rankingSource === 'pokebattler' && !options.useOfflineFallbackOnly) {
+    try {
+      options.onProgress?.({ stage: 'Loading Pokébattler raid rankings…', pct: 28 });
+      pbRankings = await loadPokebattlerTypeRankings(undefined, (msg, pct) => {
+        options.onProgress?.({ stage: msg, pct: 28 + Math.round(pct * 0.08) });
+      });
+    } catch (e) {
+      console.warn('[pokebattler] rankings load failed, using internal model', e);
+      pbRankings = null;
+    }
+  }
+
+  const report = analyzePgsExport(
+    rawExport,
+    userCfg,
+    remote,
+    (stage, pct) => {
+      options.onProgress?.({ stage, pct });
+    },
+    pbRankings,
+  );
 
   return { report, remote };
 }

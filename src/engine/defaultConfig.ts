@@ -300,6 +300,9 @@ export const DEFAULT_CFG: PogoConfig = {
     boost_other: 1.1,
     tm_min_gain_pct: 5.0,
     elite_tm_min_gain_pct: 10.0,
+    // Ranking source for type attacker lists used by placement & team builder.
+    // "pokebattler" = live Pokébattler points/estimator (recommended). "internal" = local formula.
+    ranking_source: 'pokebattler' as 'pokebattler' | 'internal',
     // --- Raid team sorter (type-aware) ---
     // Frustration is a dead move slot. Set true ONLY while a Team GO Rocket Takeover window is open
     // (regular Charged TMs can remove Frustration then). Otherwise Shadows must be purified first.
