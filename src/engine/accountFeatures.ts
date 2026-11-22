@@ -7,6 +7,7 @@ import {
 } from './costTables';
 import { Dex } from './pveModel';
 import type {
+  AffordabilityStatus,
   BagResources,
   BottleCapRecommendation,
   BottleCapShadowNote,
@@ -27,13 +28,13 @@ import type {
 // ============================================================
 // C:1 — BAG RESOURCE PARSING & BUILD READINESS
 // ============================================================
-export function extractBagResources(rawData: Record<string, unknown>, _mons: MonModel[]): BagResources {
-  void _mons;
+export function extractBagResources(rawData: Record<string, unknown>, mons: MonModel[]): BagResources {
   const accRaw = resolveAccount(rawData);
   const currencies = (accField<{ currencyType?: string; quantity?: number }[]>(rawData, 'currencyBalance') || []);
-  const stardust =
-    currencies.find((c) => String(c.currencyType || '').toUpperCase().includes('STARDUST'))?.quantity ??
-    Number(accRaw.stardust ?? rawData.stardust ?? 0);
+  const stardustEntry = currencies.find((c) => String(c.currencyType || '').toUpperCase().includes('STARDUST'));
+  const hasStardustData = stardustEntry !== undefined || accRaw.stardust !== undefined || rawData.stardust !== undefined;
+  const stardust = stardustEntry?.quantity ?? Number(accRaw.stardust ?? rawData.stardust ?? 0);
+
   const pokecoins =
     currencies.find((c) => String(c.currencyType || '').toUpperCase().includes('POKECOIN'))?.quantity ??
     Number(accRaw.pokecoins ?? rawData.pokecoins ?? 0);
@@ -47,6 +48,7 @@ export function extractBagResources(rawData: Record<string, unknown>, _mons: Mon
       ignoreInventoryCount?: boolean;
     }[]>(rawData, 'items') || [];
 
+  const hasItemData = rawItems.length > 0;
   const byCode = new Map<number, number>();
   const byName = new Map<string, number>();
   let totalBagItems = 0;
@@ -88,17 +90,95 @@ export function extractBagResources(rawData: Record<string, unknown>, _mons: Mon
     ? Number(maxItemRaw)
     : null;
 
+  // --- Parse species Candy & XL Candy ---
+  const speciesCandy: Record<string, number> = {};
+  const speciesXlCandy: Record<string, number> = {};
+  let hasCandyData = false;
+  let hasXlData = false;
+
+  const rawCandyArray =
+    accField<unknown[]>(rawData, 'candy') ||
+    accField<unknown[]>(rawData, 'pokemonFamily') ||
+    [];
+
+  if (Array.isArray(rawCandyArray) && rawCandyArray.length > 0) {
+    for (const entry of rawCandyArray) {
+      if (!entry || typeof entry !== 'object') continue;
+      const cObj = entry as Record<string, unknown>;
+      const famIdRaw = cObj.familyId ?? cObj.family ?? cObj.pokemonFamilyId ?? cObj.id;
+      if (famIdRaw === undefined || famIdRaw === null) continue;
+
+      const famKey = String(famIdRaw)
+        .toLowerCase()
+        .replace(/^family_/, '')
+        .replace(/[^a-z0-9]/g, '');
+
+      if (cObj.candy !== undefined && cObj.candy !== null) {
+        speciesCandy[famKey] = Number(cObj.candy || 0);
+        hasCandyData = true;
+      }
+      const xlVal = cObj.xlCandy ?? cObj.candyXl ?? cObj.xl;
+      if (xlVal !== undefined && xlVal !== null) {
+        speciesXlCandy[famKey] = Number(xlVal || 0);
+        hasXlData = true;
+      }
+    }
+  }
+
+  // --- Parse species Mega Energy ---
+  const speciesMegaEnergy: Record<string, number> = {};
+  let hasMegaEnergyData = false;
+
+  const rawMegaArray =
+    accField<unknown[]>(rawData, 'megaResource') ||
+    accField<unknown[]>(rawData, 'megaEnergy') ||
+    [];
+
+  if (Array.isArray(rawMegaArray) && rawMegaArray.length > 0) {
+    for (const entry of rawMegaArray) {
+      if (!entry || typeof entry !== 'object') continue;
+      const mObj = entry as Record<string, unknown>;
+      const pIdRaw = mObj.pokemonId ?? mObj.speciesId ?? mObj.id;
+      if (pIdRaw === undefined || pIdRaw === null) continue;
+      const pKey = String(pIdRaw)
+        .toLowerCase()
+        .replace(/^pokemon_/, '')
+        .replace(/[^a-z0-9]/g, '');
+      const energy = Number(mObj.megaEnergy ?? mObj.energy ?? 0);
+      speciesMegaEnergy[pKey] = energy;
+      hasMegaEnergyData = true;
+    }
+  }
+
+  const rareCandy = getCount([1301], ['rarecandy', 'itemrarecandy']);
+  const rareCandyXl = getCount([1302], ['xlrarecandy', 'itemxlrarecandy', 'rarexlcandy', 'itemrarexlcandy']);
+  const fastTms = getCount([1201], ['movererollfastattack', 'itemmovererollfastattack', 'fasttm', 'itemfasttm']);
+  const chargedTms = getCount([1202], ['movererollspecialattack', 'itemmovererollspecialattack', 'chargedtm', 'chargetm', 'itemchargedtm', 'itemchargetm']);
+  const eliteFastTms = getCount([1203], ['movererollelitefastattack', 'itemmovererollelitefastattack', 'elitefasttm', 'itemelitefasttm']);
+  const eliteChargedTms = getCount([1204], ['movererollelitechargedattack', 'movererollelitespecialattack', 'itemmovererollelitespecialattack', 'elitechargedtm', 'elitechargetm', 'itemelitechargedtm', 'itemelitechargetm']);
+
   return {
     stardust,
     pokecoins,
     total_bag_items: totalBagItems,
     max_item_storage: maxItemStorage,
-    rare_candy: getCount([1301], ['rarecandy', 'itemrarecandy']),
-    xl_candy: getCount([1302], ['xlrarecandy', 'itemxlrarecandy', 'rarexlcandy', 'itemrarexlcandy']),
-    fast_tms: getCount([1201], ['movererollfastattack', 'itemmovererollfastattack', 'fasttm', 'itemfasttm']),
-    charged_tms: getCount([1202], ['movererollspecialattack', 'itemmovererollspecialattack', 'chargedtm', 'chargetm', 'itemchargedtm', 'itemchargetm']),
-    elite_fast_tms: getCount([1203], ['movererollelitefastattack', 'itemmovererollelitefastattack', 'elitefasttm', 'itemelitefasttm']),
-    elite_charged_tms: getCount([1204], ['movererollelitechargedattack', 'movererollelitespecialattack', 'itemmovererollelitespecialattack', 'elitechargedtm', 'elitechargetm', 'itemelitechargedtm', 'itemelitechargetm']),
+    rare_candy: rareCandy,
+    rare_candy_xl: rareCandyXl,
+    xl_candy: rareCandyXl,
+    species_candy: speciesCandy,
+    species_xl_candy: speciesXlCandy,
+    species_mega_energy: speciesMegaEnergy,
+    has_stardust_data: hasStardustData,
+    has_candy_data: hasCandyData,
+    has_xl_data: hasXlData,
+    has_mega_energy_data: hasMegaEnergyData,
+    has_tm_data: hasItemData,
+    has_item_data: hasItemData,
+    has_mp_data: byCode.has(1601) || byName.has('mp'),
+    fast_tms: fastTms,
+    charged_tms: chargedTms,
+    elite_fast_tms: eliteFastTms,
+    elite_charged_tms: eliteChargedTms,
     premium_passes: getCount([1402], ['paidraidticket', 'itempaidraidticket']),
     remote_passes: getCount([1408], ['remoteraidticket', 'itemremoteraidticket']),
     mp: getCount([1601], ['mp']),
@@ -192,42 +272,99 @@ export function requiredEvolutionItem(targetName: string, targetSid?: string | n
   return null;
 }
 
+export interface BuildReadinessResult {
+  can_build_now: boolean;
+  affordability: AffordabilityStatus;
+  blockers: string[];
+  missing_balances: string[];
+}
+
 export function evaluateBuildReadiness(
   item: LevelTheseItem,
   mon: MonModel | undefined,
   bag: BagResources,
   needsTyped: { name: string; slot: 'fast' | 'charged'; elite: boolean }[] = [],
-): { can_build_now: boolean; blockers: string[] } {
+): BuildReadinessResult {
   const blockers: string[] = [];
+  const missingBalances: string[] = [];
 
-  if (item.cost.dust > bag.stardust) {
-    const short = item.cost.dust - bag.stardust;
-    blockers.push(`Need +${short.toLocaleString()} Stardust`);
+  const famKey = (mon?.species?.family?.id || mon?.species?.speciesId || item.species || '')
+    .toLowerCase()
+    .replace(/^family_/, '')
+    .replace(/[^a-z0-9]/g, '');
+
+  // 1. Stardust check
+  if (item.cost.dust > 0) {
+    if (!bag.has_stardust_data) {
+      missingBalances.push('Stardust balance unknown in export');
+    } else if (item.cost.dust > bag.stardust) {
+      const short = item.cost.dust - bag.stardust;
+      blockers.push(`Need +${short.toLocaleString()} Stardust (have ${bag.stardust.toLocaleString()})`);
+    }
   }
-  if (item.cost.xl > bag.xl_candy) {
-    blockers.push(`Needs ${item.cost.xl} XL Candy (have ${bag.xl_candy} Rare XL)`);
+
+  // 2. Species Candy check
+  if (item.cost.candy > 0) {
+    if (!bag.has_candy_data) {
+      missingBalances.push(`${item.species} Candy balance unknown in export`);
+    } else {
+      const owned = bag.species_candy[famKey] ?? bag.species_candy[String(mon?.dex ?? '')];
+      if (owned === undefined) {
+        missingBalances.push(`${item.species} Candy balance not in export`);
+      } else if (owned < item.cost.candy) {
+        const short = item.cost.candy - owned;
+        blockers.push(`Needs ${item.cost.candy} ${item.species} Candy (have ${owned}, short ${short})`);
+      }
+    }
   }
+
+  // 3. Species XL Candy check (Separate from Rare Candy XL)
+  if (item.cost.xl > 0) {
+    if (!bag.has_xl_data) {
+      missingBalances.push(`${item.species} XL Candy balance unknown in export`);
+    } else {
+      const ownedXl = bag.species_xl_candy[famKey] ?? bag.species_xl_candy[String(mon?.dex ?? '')];
+      if (ownedXl === undefined) {
+        missingBalances.push(`${item.species} XL Candy balance not in export`);
+      } else if (ownedXl < item.cost.xl) {
+        const short = item.cost.xl - ownedXl;
+        blockers.push(`Needs ${item.cost.xl} ${item.species} XL Candy (have ${ownedXl}, short ${short})`);
+      }
+    }
+  }
+
+  // 4. Frustration check
   if (mon?.is_shadow && mon.knows_moves.some((x) => Number(x) === 322 || String(x) === 'FRUSTRATION')) {
     blockers.push('Knows Frustration (wait for Rocket Takeover)');
   }
 
+  // 5. TM checks
   const eliteCharged = needsTyped.filter((t) => t.elite && t.slot === 'charged').map((t) => t.name);
   const eliteFast = needsTyped.filter((t) => t.elite && t.slot === 'fast').map((t) => t.name);
   const regCharged = needsTyped.filter((t) => !t.elite && t.slot === 'charged').map((t) => t.name);
   const regFast = needsTyped.filter((t) => !t.elite && t.slot === 'fast').map((t) => t.name);
 
-  if (eliteCharged.length > 0 && bag.elite_charged_tms <= 0) {
-    blockers.push(`0 Elite Charged TMs (${eliteCharged.join(', ')})`);
-  }
-  if (eliteFast.length > 0 && bag.elite_fast_tms <= 0) {
-    blockers.push(`0 Elite Fast TMs (${eliteFast.join(', ')})`);
-  }
-  if (regCharged.length > 0 && bag.charged_tms <= 0) {
-    blockers.push(`0 Charged TMs (${regCharged.join(', ')})`);
-  }
-  if (regFast.length > 0 && bag.fast_tms <= 0) {
-    blockers.push(`0 Fast TMs (${regFast.join(', ')})`);
-  }
+  const checkTms = () => {
+    if (!bag.has_tm_data) {
+      if (eliteCharged.length > 0 || eliteFast.length > 0 || regCharged.length > 0 || regFast.length > 0) {
+        missingBalances.push('TM inventory unknown in export');
+      }
+      return;
+    }
+    if (eliteCharged.length > 0 && bag.elite_charged_tms < eliteCharged.length) {
+      blockers.push(`Needs ${eliteCharged.length} Elite Charged TM (have ${bag.elite_charged_tms}: ${eliteCharged.join(', ')})`);
+    }
+    if (eliteFast.length > 0 && bag.elite_fast_tms < eliteFast.length) {
+      blockers.push(`Needs ${eliteFast.length} Elite Fast TM (have ${bag.elite_fast_tms}: ${eliteFast.join(', ')})`);
+    }
+    if (regCharged.length > 0 && bag.charged_tms < regCharged.length) {
+      blockers.push(`Needs ${regCharged.length} Charged TM (have ${bag.charged_tms}: ${regCharged.join(', ')})`);
+    }
+    if (regFast.length > 0 && bag.fast_tms < regFast.length) {
+      blockers.push(`Needs ${regFast.length} Fast TM (have ${bag.fast_tms}: ${regFast.join(', ')})`);
+    }
+  };
+  checkTms();
 
   if (needsTyped.length === 0 && item.tm_needed.length > 0) {
     const needsEliteFast = item.tm_needed.filter((t) => {
@@ -246,32 +383,43 @@ export function evaluateBuildReadiness(
       const low = t.toLowerCase();
       return !low.includes('elite') && !low.includes('fast tm');
     });
-    if (needsEliteCharged.length > 0 && bag.elite_charged_tms <= 0) {
-      blockers.push(`0 Elite Charged TMs (${needsEliteCharged.join(', ')})`);
-    }
-    if (needsEliteFast.length > 0 && bag.elite_fast_tms <= 0) {
-      blockers.push(`0 Elite Fast TMs (${needsEliteFast.join(', ')})`);
-    }
-    if (needsRegFast.length > 0 && bag.fast_tms <= 0) {
-      blockers.push(`0 Fast TMs (${needsRegFast.join(', ')})`);
-    }
-    if (needsRegCharged.length > 0 && bag.charged_tms <= 0) {
-      blockers.push(`0 Charged TMs (${needsRegCharged.join(', ')})`);
-    }
-  }
 
-  // Evolution Stone check when evolving to a stone-requiring species
-  if (item.evolve_to) {
-    const evoReq = requiredEvolutionItem(item.evolve_to, mon?.evolve_to_sid);
-    if (evoReq) {
-      const owned = Number(bag[evoReq.bagKey] || 0);
-      if (owned <= 0) {
-        blockers.push(`0 ${evoReq.label}s (required for ${item.evolve_to})`);
+    if (!bag.has_tm_data) {
+      if (needsEliteFast.length || needsEliteCharged.length || needsRegFast.length || needsRegCharged.length) {
+        missingBalances.push('TM inventory unknown in export');
+      }
+    } else {
+      if (needsEliteCharged.length > 0 && bag.elite_charged_tms < needsEliteCharged.length) {
+        blockers.push(`0 Elite Charged TMs (${needsEliteCharged.join(', ')})`);
+      }
+      if (needsEliteFast.length > 0 && bag.elite_fast_tms < needsEliteFast.length) {
+        blockers.push(`0 Elite Fast TMs (${needsEliteFast.join(', ')})`);
+      }
+      if (needsRegFast.length > 0 && bag.fast_tms < needsRegFast.length) {
+        blockers.push(`0 Fast TMs (${needsRegFast.join(', ')})`);
+      }
+      if (needsRegCharged.length > 0 && bag.charged_tms < needsRegCharged.length) {
+        blockers.push(`0 Charged TMs (${needsRegCharged.join(', ')})`);
       }
     }
   }
 
-  // Zygarde Cells check
+  // 6. Evolution Item check
+  if (item.evolve_to) {
+    const evoReq = requiredEvolutionItem(item.evolve_to, mon?.evolve_to_sid);
+    if (evoReq) {
+      if (!bag.has_item_data) {
+        missingBalances.push(`${evoReq.label} inventory unknown in export`);
+      } else {
+        const owned = Number(bag[evoReq.bagKey] || 0);
+        if (owned <= 0) {
+          blockers.push(`0 ${evoReq.label}s (required for ${item.evolve_to})`);
+        }
+      }
+    }
+  }
+
+  // 7. Zygarde Cells check
   if (mon?.dex === 718) {
     const fn = normStr(mon.form_name);
     if (fn.includes('10') || fn.includes('ten')) {
@@ -281,39 +429,208 @@ export function evaluateBuildReadiness(
     }
   }
 
-  // Crowned Sword/Shield & Fusion Energy checks
-  const evoLow = (item.evolve_to || '').toLowerCase();
-  const roleLow = (item.role || '').toLowerCase();
-  if (mon?.dex === 888 && (evoLow.includes('crowned') || roleLow.includes('crowned'))) {
-    if (bag.crowned_zacian_energy < 1000) {
-      blockers.push(`Crowned Zacian Energy (${bag.crowned_zacian_energy}/1,000)`);
+  // 8. Crowned Energy check
+  if (mon && isCrownedForm(mon)) {
+    const isZac = mon.species?.speciesId.includes('zacian') || mon.dex === 888;
+    const isZam = mon.species?.speciesId.includes('zamazenta') || mon.dex === 889;
+    if (isZac && bag.crowned_zacian_energy < 1000) {
+      blockers.push(`Rusted Sword Energy (${bag.crowned_zacian_energy}/1,000)`);
     }
-  }
-  if (mon?.dex === 889 && (evoLow.includes('crowned') || roleLow.includes('crowned'))) {
-    if (bag.crowned_zamazenta_energy < 1000) {
-      blockers.push(`Crowned Zamazenta Energy (${bag.crowned_zamazenta_energy}/1,000)`);
-    }
-  }
-  if (mon?.dex === 800 && !mon.is_fusion) {
-    if (evoLow.includes('dusk') && bag.solar_fusion_energy < 1000) {
-      blockers.push(`Solar Fusion Energy (${bag.solar_fusion_energy}/1,000)`);
-    }
-    if (evoLow.includes('dawn') && bag.lunar_fusion_energy < 1000) {
-      blockers.push(`Lunar Fusion Energy (${bag.lunar_fusion_energy}/1,000)`);
-    }
-  }
-  if (mon?.dex === 646 && !mon.is_fusion) {
-    if (evoLow.includes('white') && bag.blaze_fusion_energy < 1000) {
-      blockers.push(`Blaze Fusion Energy (${bag.blaze_fusion_energy}/1,000)`);
-    }
-    if (evoLow.includes('black') && bag.volt_fusion_energy < 1000) {
-      blockers.push(`Volt Fusion Energy (${bag.volt_fusion_energy}/1,000)`);
+    if (isZam && bag.crowned_zamazenta_energy < 1000) {
+      blockers.push(`Rusted Shield Energy (${bag.crowned_zamazenta_energy}/1,000)`);
     }
   }
 
+  let affordability: AffordabilityStatus;
+  if (blockers.length > 0) {
+    affordability = 'BLOCKED';
+  } else if (missingBalances.length > 0) {
+    affordability = 'UNKNOWN';
+  } else {
+    affordability = 'AFFORDABLE';
+  }
+
   return {
-    can_build_now: blockers.length === 0,
+    can_build_now: affordability === 'AFFORDABLE',
+    affordability,
     blockers,
+    missing_balances: missingBalances,
+  };
+}
+
+/**
+ * Sequential Resource Allocation Queue:
+ * Allocates available resources to prioritized investment recommendations sequentially.
+ * Deducts allocated Stardust, species Candy, species XL, Rare Candy, and TMs from running balance.
+ * Prevents multiple builds from erroneously assuming the same single resource.
+ */
+export function allocateSequentialResourceQueue(
+  items: LevelTheseItem[],
+  bag: BagResources,
+  monsByUid: Map<string, MonModel>,
+  options?: { allowRareCandy?: boolean; allowRareXl?: boolean },
+): {
+  items: LevelTheseItem[];
+  remaining: BagResources;
+} {
+  const allowRareCandy = options?.allowRareCandy ?? false;
+  const allowRareXl = options?.allowRareXl ?? false;
+
+  let dustLeft = bag.stardust;
+  let rareCandyLeft = bag.rare_candy;
+  let rareXlLeft = bag.rare_candy_xl;
+  let fastTmsLeft = bag.fast_tms;
+  let chargedTmsLeft = bag.charged_tms;
+  let eliteFastTmsLeft = bag.elite_fast_tms;
+  let eliteChargedTmsLeft = bag.elite_charged_tms;
+
+  const speciesCandyLeft = new Map<string, number>(Object.entries(bag.species_candy));
+  const speciesXlLeft = new Map<string, number>(Object.entries(bag.species_xl_candy));
+
+  const resultItems = items.map((it, idx) => {
+    const item = { ...it, queue_position: idx + 1 };
+    const mon = monsByUid.get(item.id);
+    const famKey = (mon?.species?.family?.id || mon?.species?.speciesId || item.species || '')
+      .toLowerCase()
+      .replace(/^family_/, '')
+      .replace(/[^a-z0-9]/g, '');
+
+    const typedNeeds = item.tm_typed || [];
+    const eliteChargedCnt = typedNeeds.filter((t) => t.elite && t.slot === 'charged').length;
+    const eliteFastCnt = typedNeeds.filter((t) => t.elite && t.slot === 'fast').length;
+    const regChargedCnt = typedNeeds.filter((t) => !t.elite && t.slot === 'charged').length;
+    const regFastCnt = typedNeeds.filter((t) => !t.elite && t.slot === 'fast').length;
+
+    // Check individual readiness first
+    const indCheck = evaluateBuildReadiness(item, mon, bag, typedNeeds);
+    item.affordability = indCheck.affordability;
+
+    const seqBlockers: string[] = [];
+    let isUnknown = false;
+
+    // Sequential Stardust check
+    if (item.cost.dust > 0) {
+      if (!bag.has_stardust_data) {
+        isUnknown = true;
+      } else if (dustLeft < item.cost.dust) {
+        seqBlockers.push(`Queue shortage: Need ${item.cost.dust.toLocaleString()} Stardust (${dustLeft.toLocaleString()} unreserved remaining)`);
+      }
+    }
+
+    // Sequential Species Candy check
+    if (item.cost.candy > 0) {
+      if (!bag.has_candy_data) {
+        isUnknown = true;
+      } else {
+        const curSpCandy = speciesCandyLeft.get(famKey) ?? speciesCandyLeft.get(String(mon?.dex ?? '')) ?? 0;
+        let needed = item.cost.candy;
+        if (curSpCandy >= needed) {
+          // covered by species candy
+        } else if (allowRareCandy && curSpCandy + rareCandyLeft >= needed) {
+          // can bridge with rare candy
+        } else {
+          seqBlockers.push(`Queue shortage: Need ${needed} ${item.species} Candy (${curSpCandy} remaining)`);
+        }
+      }
+    }
+
+    // Sequential Species XL check
+    if (item.cost.xl > 0) {
+      if (!bag.has_xl_data) {
+        isUnknown = true;
+      } else {
+        const curSpXl = speciesXlLeft.get(famKey) ?? speciesXlLeft.get(String(mon?.dex ?? '')) ?? 0;
+        let needed = item.cost.xl;
+        if (curSpXl >= needed) {
+          // covered
+        } else if (allowRareXl && curSpXl + rareXlLeft >= needed) {
+          // bridged with Rare XL
+        } else {
+          seqBlockers.push(`Queue shortage: Need ${needed} ${item.species} XL Candy (${curSpXl} remaining)`);
+        }
+      }
+    }
+
+    // Sequential TM checks
+    if (!bag.has_tm_data) {
+      if (eliteChargedCnt || eliteFastCnt || regChargedCnt || regFastCnt) {
+        isUnknown = true;
+      }
+    } else {
+      if (eliteChargedCnt > 0 && eliteChargedTmsLeft < eliteChargedCnt) {
+        seqBlockers.push(`Queue shortage: 0 Elite Charged TMs remaining (have ${bag.elite_charged_tms}, reserved by prior recommendations)`);
+      }
+      if (eliteFastCnt > 0 && eliteFastTmsLeft < eliteFastCnt) {
+        seqBlockers.push(`Queue shortage: 0 Elite Fast TMs remaining (reserved by prior recommendations)`);
+      }
+      if (regChargedCnt > 0 && chargedTmsLeft < regChargedCnt) {
+        seqBlockers.push(`Queue shortage: Insufficient Charged TMs (${chargedTmsLeft} remaining)`);
+      }
+      if (regFastCnt > 0 && fastTmsLeft < regFastCnt) {
+        seqBlockers.push(`Queue shortage: Insufficient Fast TMs (${fastTmsLeft} remaining)`);
+      }
+    }
+
+    // Combine individual and sequential blockers
+    const allBlockers = Array.from(new Set([...(indCheck.blockers || []), ...seqBlockers]));
+
+    if (allBlockers.length > 0) {
+      item.sequential_affordability = 'BLOCKED';
+      item.can_build_now = false;
+      item.blockers = allBlockers;
+    } else if (isUnknown || indCheck.missing_balances.length > 0) {
+      item.sequential_affordability = 'UNKNOWN';
+      item.can_build_now = false;
+      item.blockers = Array.from(new Set([...indCheck.missing_balances, 'Resource balance unknown in export']));
+    } else {
+      item.sequential_affordability = 'AFFORDABLE';
+      item.can_build_now = true;
+      item.blockers = [];
+
+      // Deduct resources from running balances
+      dustLeft -= item.cost.dust;
+      const curSpCandy = speciesCandyLeft.get(famKey) ?? speciesCandyLeft.get(String(mon?.dex ?? '')) ?? 0;
+      if (curSpCandy >= item.cost.candy) {
+        speciesCandyLeft.set(famKey, curSpCandy - item.cost.candy);
+      } else {
+        speciesCandyLeft.set(famKey, 0);
+        rareCandyLeft -= (item.cost.candy - curSpCandy);
+      }
+
+      const curSpXl = speciesXlLeft.get(famKey) ?? speciesXlLeft.get(String(mon?.dex ?? '')) ?? 0;
+      if (curSpXl >= item.cost.xl) {
+        speciesXlLeft.set(famKey, curSpXl - item.cost.xl);
+      } else {
+        speciesXlLeft.set(famKey, 0);
+        rareXlLeft -= (item.cost.xl - curSpXl);
+      }
+
+      eliteChargedTmsLeft -= eliteChargedCnt;
+      eliteFastTmsLeft -= eliteFastCnt;
+      chargedTmsLeft -= regChargedCnt;
+      fastTmsLeft -= regFastCnt;
+    }
+
+    return item;
+  });
+
+  const remainingBag: BagResources = {
+    ...bag,
+    stardust: Math.max(0, dustLeft),
+    rare_candy: Math.max(0, rareCandyLeft),
+    rare_candy_xl: Math.max(0, rareXlLeft),
+    xl_candy: Math.max(0, rareXlLeft),
+    fast_tms: Math.max(0, fastTmsLeft),
+    charged_tms: Math.max(0, chargedTmsLeft),
+    elite_fast_tms: Math.max(0, eliteFastTmsLeft),
+    elite_charged_tms: Math.max(0, eliteChargedTmsLeft),
+    species_candy: Object.fromEntries(speciesCandyLeft),
+    species_xl_candy: Object.fromEntries(speciesXlLeft),
+  };
+
+  return {
+    items: resultItems,
+    remaining: remainingBag,
   };
 }
 

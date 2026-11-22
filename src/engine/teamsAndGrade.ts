@@ -2262,7 +2262,7 @@ export function computeGradeAndDetails(
         atype,
         false,
       );
-      const eliteSet = new Set((targetSp.eliteMoves || []).map((e) => String(e).toUpperCase()));
+      const eliteSet = new Set([...(targetSp.eliteMoves || []), ...(targetSp.legacyMoves || [])].map((e) => String(e).toUpperCase()));
       const bestWith = cands[0]?.[0] ?? 0;
       const bestWithout =
         cands.find((c) => !eliteSet.has(c[1].toUpperCase()) && !eliteSet.has(c[2].toUpperCase()))?.[0] ?? 0;
@@ -3036,7 +3036,7 @@ export function buildFullReport(params: {
     let waitCdReason: string | undefined;
     if (m.evolve_to_sid && !isOutOfPlay(m)) {
       const targetSp = dex.byId.get(m.evolve_to_sid.replace(/_shadow$/, ''));
-      const eliteIds = new Set((targetSp?.eliteMoves || []).map((e) => String(e).toUpperCase()));
+      const eliteIds = new Set([...(targetSp?.eliteMoves || []), ...(targetSp?.legacyMoves || [])].map((e) => String(e).toUpperCase()));
       if (targetSp && eliteIds.size > 0) {
         const mvParts = (m.moveset || '')
           .split(' / ')

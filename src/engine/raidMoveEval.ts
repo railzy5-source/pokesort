@@ -306,7 +306,7 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
       route: fastKnown ? 'known' : fastElite ? 'elite_tm' : 'tm',
       replaces: fastKnown ? null : knownFast,
       of: regularFastPool.length || 1,
-      hit: 1,
+      hit: Math.min(regularFastPool.length || 1, Math.max(1, regularFastHits)),
     };
     for (const [cid, cm] of chargedById) {
       if (cm.type !== atype) continue; // an off-type Charged Move does nothing for this team
@@ -321,7 +321,7 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
         route: chargedKnown ? 'known' : chargedElite ? 'elite_tm' : 'tm',
         replaces: slot,
         of: regularChargedPool.length || 1,
-        hit: regularChargedHits || 1,
+        hit: Math.min(regularChargedPool.length || 1, Math.max(1, regularChargedHits)),
       };
       plans.push({
         fast: fastStep,

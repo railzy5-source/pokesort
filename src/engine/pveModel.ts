@@ -498,7 +498,7 @@ export function pickRaidMoveset(
   let gain = Number(rc.tm_min_gain_pct ?? 5.0);
   if (unreadable || gain < 0) return [label(best), ''];
 
-  const elite = new Set((species.eliteMoves || []).map((e) => String(e).toUpperCase()));
+  const elite = new Set([...(species.eliteMoves || []), ...(species.legacyMoves || [])].map((e) => String(e).toUpperCase()));
   if (
     [best[1], best[2]].some(
       (mid) => elite.has(String(mid).toUpperCase()) && !have.has(moveLabel(mid).toLowerCase()),
@@ -634,7 +634,7 @@ export function readinessFields(
   const targetSid = mon.evolve_to_sid || currentSid;
   const target = dex.byId.get(targetSid) || mon.species;
 
-  const eliteIds = new Set((target.eliteMoves || []).map((e) => String(e).toUpperCase()));
+  const eliteIds = new Set([...(target.eliteMoves || []), ...(target.legacyMoves || [])].map((e) => String(e).toUpperCase()));
   const poolOf = (sp: PvPokeSpecies) => {
     const s = new Set<string>();
     for (const mid of sp.fastMoves || []) s.add(String(mid).toUpperCase());

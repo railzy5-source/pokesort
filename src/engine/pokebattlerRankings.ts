@@ -12,6 +12,7 @@
  */
 
 import { RAID_USEFUL_TYPES } from './defaultConfig';
+import { CPM } from './cpmTable';
 
 const PB_API = 'https://www.pokebattler.com/api/attackers';
 const CACHE_KEY = 'pokebattler_type_rankings_v1';
@@ -320,17 +321,10 @@ export function specimenPbScore(
   movesetFactor: number,
 ): number {
   if (!(speciesPoints > 0)) return 0;
-  // CPM ratio vs L40 (approx table-free curve used widely in GO calcs)
-  const cpm = (lv: number) => {
-    // Piecewise-ish: close enough for ranking; L40 = 0.7903, L50 = 0.8403
-    if (lv >= 50) return 0.8403;
-    if (lv >= 40) return 0.7903 + (0.8403 - 0.7903) * ((lv - 40) / 10);
-    if (lv >= 30) return 0.7317 + (0.7903 - 0.7317) * ((lv - 30) / 10);
-    if (lv >= 20) return 0.5974 + (0.7317 - 0.5974) * ((lv - 20) / 10);
-    if (lv >= 15) return 0.5176 + (0.5974 - 0.5176) * ((lv - 15) / 5);
-    return 0.4 * Math.max(0.2, lv / 15);
-  };
-  const levelFactor = cpm(level) / cpm(40);
+  const snapped = Math.max(1, Math.min(51, Math.round(level * 2) / 2));
+  const levelCpm = CPM[snapped] ?? 0.7903;
+  const cpm40 = CPM[40] ?? 0.7903;
+  const levelFactor = levelCpm / cpm40;
   const atkFactor = (15 + Math.max(0, Math.min(15, atkIv))) / 30;
   return speciesPoints * levelFactor * atkFactor * Math.max(0.05, movesetFactor);
 }

@@ -572,12 +572,138 @@ export function familyPathCost(
   return [info.cost, info.item ? [info.item] : [], info.source !== 'game'];
 }
 
+export function isStarterSpecies(sid: string): boolean {
+  const s = sid.toLowerCase().split('_')[0];
+  const STARTER_FAMILIES = new Set([
+    'bulbasaur', 'ivysaur', 'venusaur',
+    'charmander', 'charmeleon', 'charizard',
+    'squirtle', 'wartortle', 'blastoise',
+    'chikorita', 'bayleef', 'meganium',
+    'cyndaquil', 'quilava', 'typhlosion',
+    'totodile', 'croconaw', 'feraligatr',
+    'treecko', 'grovyle', 'sceptile',
+    'torchic', 'combusken', 'blaziken',
+    'mudkip', 'marshtomp', 'swampert',
+    'turtwig', 'grotle', 'torterra',
+    'chimchar', 'monferno', 'infernape',
+    'piplup', 'prinplup', 'empoleon',
+    'snivy', 'servine', 'serperior',
+    'tepig', 'pignite', 'emboar',
+    'oshawott', 'dewott', 'samurott',
+    'chespin', 'quilladin', 'chesnaught',
+    'fennekin', 'braixen', 'delphox',
+    'froakie', 'frogadier', 'greninja',
+    'rowlet', 'dartrix', 'decidueye',
+    'litten', 'torracat', 'incineroar',
+    'popplio', 'brionne', 'primarina',
+    'grookey', 'thwackey', 'rillaboom',
+    'scorbunny', 'raboot', 'cinderace',
+    'sobble', 'drizzile', 'inteleon',
+    'sprigatito', 'floragato', 'meowscarada',
+    'fuecoco', 'crocalor', 'skeledirge',
+    'quaxly', 'quaxwell', 'quaquaval',
+  ]);
+  return STARTER_FAMILIES.has(s);
+}
+
+export function isBabySpecies(sid: string): boolean {
+  const s = sid.toLowerCase().split('_')[0];
+  const BABIES = new Set([
+    'pichu', 'cleffa', 'igglybuff', 'togepi', 'tyrogue', 'smoochum',
+    'elekid', 'magby', 'azurill', 'wynaut', 'budew', 'chingling',
+    'bonsly', 'mime_jr', 'mimejr', 'happiny', 'munchlax', 'riolu',
+    'mantyke', 'toxel',
+  ]);
+  return BABIES.has(s);
+}
+
+export function isPseudoLegendarySpecies(sid: string): boolean {
+  const s = sid.toLowerCase().split('_')[0];
+  const PSEUDOS = new Set([
+    'dratini', 'dragonair', 'dragonite',
+    'larvitar', 'pupitar', 'tyranitar',
+    'bagon', 'shelgon', 'salamence',
+    'beldum', 'metang', 'metagross',
+    'gible', 'gabite', 'garchomp',
+    'deino', 'zweilous', 'hydreigon',
+    'goomy', 'sliggoo', 'goodra',
+    'jangmo_o', 'jangmo-o', 'hakamo_o', 'hakamo-o', 'kommo_o', 'kommo-o',
+    'dreepy', 'drakloak', 'dragapult',
+    'frigibax', 'arctibax', 'baxcalibur',
+    'lucario', 'togekiss', 'snorlax', 'lapras', 'blissey', 'chansey',
+  ]);
+  return PSEUDOS.has(s);
+}
+
+export function secondChargedMoveCost(
+  sp: { speciesId?: string; tags?: string[]; buddyDistance?: number } | null | undefined,
+  opts?: { isShadow?: boolean; isPurified?: boolean },
+): { dust: number; candy: number } {
+  if (!sp) return { dust: 50000, candy: 50 };
+  const tags = new Set((sp.tags || []).map((t) => t.toLowerCase()));
+  const sid = (sp.speciesId || '').toLowerCase();
+  const dist = sp.buddyDistance ?? 3;
+
+  let baseDust = 50000;
+  let baseCandy = 50;
+
+  if (isBabySpecies(sid) || tags.has('baby')) {
+    baseDust = 10000;
+    baseCandy = 25;
+  } else if (
+    tags.has('legendary') ||
+    tags.has('mythical') ||
+    tags.has('ultrabeast') ||
+    dist >= 20
+  ) {
+    baseDust = 100000;
+    baseCandy = 100;
+  } else if (dist >= 5 || isPseudoLegendarySpecies(sid)) {
+    baseDust = 75000;
+    baseCandy = 75;
+  } else if (dist <= 1 || isStarterSpecies(sid)) {
+    baseDust = 10000;
+    baseCandy = 25;
+  }
+
+  let dust = baseDust;
+  let candy = baseCandy;
+  if (opts?.isShadow) {
+    dust = Math.round(baseDust * 1.2);
+    candy = Math.round(baseCandy * 1.2);
+  } else if (opts?.isPurified) {
+    dust = Math.round(baseDust * 0.8);
+    candy = Math.round(baseCandy * 0.8);
+  }
+
+  return { dust, candy };
+}
+
 export function buildRowCosts(
   m: MonModel,
   byId: Map<string, { speciesId: string; family?: { parent?: string; evolutions?: string[] } }>,
-): { dust: number; candy: number; xl: number; evolve_candy: number; evolve_item: string; evolve_estimated: boolean } {
+  needsSecondMove = false,
+): {
+  dust: number;
+  candy: number;
+  xl: number;
+  evolve_candy: number;
+  evolve_item: string;
+  evolve_estimated: boolean;
+  second_move_dust: number;
+  second_move_candy: number;
+} {
   if (!m.verdict.startsWith('BUILD_') && m.verdict !== 'KEEP') {
-    return { dust: 0, candy: 0, xl: 0, evolve_candy: 0, evolve_item: '', evolve_estimated: false };
+    return {
+      dust: 0,
+      candy: 0,
+      xl: 0,
+      evolve_candy: 0,
+      evolve_item: '',
+      evolve_estimated: false,
+      second_move_dust: 0,
+      second_move_candy: 0,
+    };
   }
   const startSid = m.species?.speciesId || '';
   const targetSid =
@@ -599,13 +725,27 @@ export function buildRowCosts(
       isPurified: m.is_purified,
     });
   }
+
+  let smDust = 0;
+  let smCandy = 0;
+  if (needsSecondMove && !m.has_third_move) {
+    const smCost = secondChargedMoveCost(m.species, {
+      isShadow: m.is_shadow,
+      isPurified: m.is_purified,
+    });
+    smDust = smCost.dust;
+    smCandy = smCost.candy;
+  }
+
   return {
-    dust,
-    candy: candy + evoCandy,
+    dust: dust + smDust,
+    candy: candy + evoCandy + smCandy,
     xl,
     evolve_candy: evoCandy,
     evolve_item: evoItems.join(', '),
     evolve_estimated: evoEstimated,
+    second_move_dust: smDust,
+    second_move_candy: smCandy,
   };
 }
 
