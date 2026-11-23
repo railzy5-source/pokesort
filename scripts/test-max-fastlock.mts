@@ -7,9 +7,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { analyzePgsExport } from '../src/engine/sorterEngine';
 import { buildOfflineFallbackData } from '../src/engine/offlineFallback';
+import { loadFixture } from './_fixture.mts';
 
 const DIR = path.resolve(import.meta.dirname, '../public/assets/aistudio');
-const raw = JSON.parse(fs.readFileSync(path.join(DIR, 'PGSStats_e818d197.json'), 'utf8'));
+const raw = loadFixture();
 
 function data(trusted: boolean) {
   const d: any = buildOfflineFallbackData();

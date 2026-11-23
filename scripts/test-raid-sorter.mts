@@ -11,7 +11,11 @@ import { runFullAnalysis } from '../src/engine/sorterEngine';
 import { moveLabel } from '../src/engine/pveModel';
 
 const DIR = path.resolve(import.meta.dirname, '../public/assets/aistudio');
-const FILES = fs.readdirSync(DIR).filter((f) => /^PGSStats_.*\.json$/.test(f));
+const FILES = fs.existsSync(DIR) ? fs.readdirSync(DIR).filter((f) => /^PGSStats_.*\.json$/.test(f)) : [];
+if (FILES.length === 0) {
+  console.error(`\n  ✗ FAIL: no PGSStats_*.json fixture found in ${DIR}. Add an export there (see scripts/_fixture.mts).`);
+  process.exit(1);
+}
 
 type Bag = { charged: number; eliteCharged: number; fast?: number; eliteFast?: number };
 const SCENARIOS: { name: string; bag: Bag | null }[] = [
@@ -151,4 +155,8 @@ for (const file of FILES) {
 }
 
 console.log(`\n${checks} checks, ${failures} failed.`);
+if (checks === 0) {
+  console.error('  ✗ FAIL: zero checks ran, which means the test did not test anything.');
+  process.exit(1);
+}
 process.exit(failures ? 1 : 0);

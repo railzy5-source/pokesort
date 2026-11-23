@@ -7,6 +7,7 @@ import path from 'node:path';
 import { runFullAnalysis } from '../src/engine/sorterEngine';
 import { tradeBlockReason } from '../src/engine/accountFeatures';
 import { TRADE_COST_SPECIAL_NEW, TRADE_COST_SPECIAL_REGISTERED } from '../src/engine/costTables';
+import { loadFixture } from './_fixture.mts';
 
 let fails = 0;
 const check = (ok: boolean, msg: string) => { console.log(ok ? '  ✓' : '  ✗ FAIL:', msg); if (!ok) fails++; };
@@ -28,7 +29,7 @@ check(t({ dex: 888, species: { tags: ['legendary'], speciesId: 'zacian_crowned_s
 check(t({ dex: 888, species: { tags: ['legendary'], speciesId: 'zacian_hero' } }) === null, 'Hero Zacian is tradable (Special Trade)');
 
 const DIR = path.resolve(import.meta.dirname, '../public/assets/aistudio');
-const raw0 = JSON.parse(fs.readFileSync(path.join(DIR, 'PGSStats_e818d197.json'), 'utf8'));
+const raw0 = loadFixture();
 const run = (raw: any) => (runFullAnalysis(JSON.parse(JSON.stringify(raw)), {}, { useOfflineFallbackOnly: true }) as Promise<any>).then((r) => r.report);
 
 console.log('\nRare offers');

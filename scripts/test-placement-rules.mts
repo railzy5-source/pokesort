@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runFullAnalysis } from '../src/engine/sorterEngine';
 import { canJoinMaxBattle, currentMaxMoveType } from '../src/engine/pveModel';
+import { loadFixture } from './_fixture.mts';
 
 let fails = 0;
 const check = (ok: boolean, msg: string) => { console.log(ok ? '  ✓' : '  ✗ FAIL:', msg); if (!ok) fails++; };
@@ -20,7 +21,7 @@ check(ct?.type === 'steel' && ct.why === 'fixed', 'Crowned Max Move is a fixed S
 check(currentMaxMoveType({} as any, mon({ dex: 888, species: { speciesId: 'zacian_hero' }, form_name: 'Hero' })) === null, 'Hero Zacian has no Max Move type');
 
 const DIR = path.resolve(import.meta.dirname, '../public/assets/aistudio');
-const raw = JSON.parse(fs.readFileSync(path.join(DIR, 'PGSStats_e818d197.json'), 'utf8'));
+const raw = loadFixture();
 const run = async (cfg: any = {}) => ((await runFullAnalysis(JSON.parse(JSON.stringify(raw)), cfg, { useOfflineFallbackOnly: true })) as any).report;
 
 console.log('\nOne role per Pokémon');

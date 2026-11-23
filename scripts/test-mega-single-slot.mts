@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 const root = process.argv[2] || path.resolve(import.meta.dirname, '..');
 const { runFullAnalysis } = await import(path.join(root, 'src/engine/sorterEngine.ts'));
-const raw = JSON.parse(fs.readFileSync(path.join(root, 'public/assets/aistudio/PGSStats_e818d197.json'), 'utf8'));
+import { loadFixture } from './_fixture.mts';
+const raw = loadFixture();
 const { report } = await runFullAnalysis(raw, {}, { useOfflineFallbackOnly: true });
 const r = report as any;
 const megaTeams = new Map<string, string[]>(); // mon id -> teams where it is the Mega

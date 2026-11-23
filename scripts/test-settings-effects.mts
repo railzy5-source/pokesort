@@ -4,11 +4,12 @@ import path from 'node:path';
 import { runFullAnalysis } from '../src/engine/sorterEngine';
 import { analyzePgsExport } from '../src/engine/sorterEngine';
 import { buildOfflineFallbackData } from '../src/engine/offlineFallback';
+import { loadFixture } from './_fixture.mts';
 
 let fails = 0;
 const check = (ok: boolean, msg: string) => { console.log(ok ? '  ✓' : '  ✗ FAIL:', msg); if (!ok) fails++; };
 const DIR = path.resolve(import.meta.dirname, '../public/assets/aistudio');
-const raw = JSON.parse(fs.readFileSync(path.join(DIR, 'PGSStats_e818d197.json'), 'utf8'));
+const raw = loadFixture();
 const verdictOf = (r: any) => new Map<string, string>(r.mons.map((m: any) => [m.id, m.verdict]));
 const changed = (a: any, b: any) => { const x = verdictOf(a), y = verdictOf(b); let n = 0; for (const [k, v] of x) if (y.get(k) !== v) n++; return n; };
 const run = async (cfg: any = {}) => ((await runFullAnalysis(JSON.parse(JSON.stringify(raw)), cfg, { useOfflineFallbackOnly: true })) as any).report;

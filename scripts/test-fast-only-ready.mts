@@ -2,10 +2,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runFullAnalysis } from '../src/engine/sorterEngine';
+import { loadFixture } from './_fixture.mts';
 let fails = 0;
 const check = (ok: boolean, msg: string) => { console.log(ok ? '  ✓' : '  ✗ FAIL:', msg); if (!ok) fails++; };
 const DIR = path.resolve(import.meta.dirname, '../public/assets/aistudio');
-const raw = JSON.parse(fs.readFileSync(path.join(DIR, 'PGSStats_e818d197.json'), 'utf8'));
+const raw = loadFixture();
 const rep: any = (await runFullAnalysis(raw, {}, { useOfflineFallbackOnly: true })).report;
 
 console.log('Pokémon table (raid builds)');
