@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:raid": "tsx scripts/test-raid-sorter.mts"
+    "test:raid": "tsx scripts/test-raid-sorter.mts",
+    "test": "tsx scripts/run-all-tests.mts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
