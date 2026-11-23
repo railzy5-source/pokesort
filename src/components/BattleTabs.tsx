@@ -135,6 +135,8 @@ export const WishlistTab: React.FC<BattleTabProps> = ({ report, onInspectId }) =
           <option value="UPGRADE">UPGRADE only</option>
           <option value="DECIDE">DECIDE (in Review)</option>
           <option value="NO DYNAMAX">NO DYNAMAX</option>
+          <option value="CANDIDATE">CANDIDATE (not unlocked yet)</option>
+          <option value="EVOLVE FIRST">EVOLVE FIRST</option>
           <option value="HAVE">HAVE only</option>
         </select>
       </div>
@@ -285,6 +287,9 @@ const RaidEntryNotes: React.FC<{ m: RaidTeamEntry }> = ({ m }) => {
       {m.upgrade_hint && (
         <div className="text-[11px] leading-snug text-slate-500">↑ {m.upgrade_hint}</div>
       )}
+      {m.moves_note && (
+        <div className="text-[11px] leading-snug text-amber-700 dark:text-amber-400">⚠ {m.moves_note}</div>
+      )}
       {m.fast_lock_note && (
         <div className="text-[11px] leading-snug text-sky-700 dark:text-sky-400">🔒 {m.fast_lock_note}</div>
       )}
@@ -428,7 +433,18 @@ export const RaidTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
                 <>
                   {!hasMegaInTeam && (
                     <div className="mt-2.5 text-[11px] text-slate-400 dark:text-slate-500">
-                      No Mega/Primal owned for {x.type} — 6 non-Mega attackers
+                      {x.mega_candidate
+                        ? `No unlocked Mega/Primal for ${x.type}: 6 non-Mega attackers`
+                        : `No Mega/Primal owned for ${x.type}: 6 non-Mega attackers`}
+                    </div>
+                  )}
+                  {!hasMegaInTeam && x.mega_candidate && (
+                    <div className="mt-1 rounded-lg border border-dashed border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+                      <span className="font-semibold">Mega investment, not on the team:</span> {x.mega_candidate.name} (from your{' '}
+                      {x.mega_candidate.from}, {x.mega_candidate.iv}, CP {x.mega_candidate.cp}).{' '}
+                      <span className="font-semibold">{x.mega_candidate.status_label}.</span>{' '}
+                      {x.mega_candidate.needs.length > 0 && <>Needs: {x.mega_candidate.needs.join(', then ')}. </>}
+                      Mega Energy needed: unknown (not in your export).
                     </div>
                   )}
 

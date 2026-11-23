@@ -90,6 +90,8 @@ export const WISH_STATUS_CLASSES: Record<string, string> = {
   HUNT: 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30',
   DECIDE: 'bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30',
   'NO DYNAMAX': 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
+  CANDIDATE: 'bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30',
+  'EVOLVE FIRST': 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/30',
 };
 
 export const TABS: { key: TabKey; label: string }[] = [
