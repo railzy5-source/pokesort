@@ -81,6 +81,8 @@ export interface RaidAssessment {
   statusLabel: string;
   /** Set when the Fast Attack is deliberately kept because it decides this Pokémon's Max Move type. */
   fastLockNote?: string;
+  /** A data-quality note about the moves (for example a Charged Move that was not recognised). Not a TM suggestion. */
+  movesNote?: string;
 }
 
 export interface AssessArgs {
@@ -146,10 +148,11 @@ function readKnownMoves(
   dex: Dex,
   mon: MonModel,
   frustrationOk: boolean,
-): { moves: KnownMove[]; unreadable: boolean } {
+): { moves: KnownMove[]; unreadable: boolean; fastUnreadable: boolean } {
   const pve = dex.pve;
   const out: KnownMove[] = [];
   let unreadable = false;
+  let fastUnreadable = false;
   const slots: [KnownMove['slot'], 'move1' | 'move2' | 'move3'][] = [
     ['fast', 'move1'],
     ['charged1', 'move2'],
@@ -172,6 +175,7 @@ function readKnownMoves(
         });
       } else {
         unreadable = true;
+        if (slot === 'fast') fastUnreadable = true;
       }
       continue;
     }
@@ -184,7 +188,7 @@ function readKnownMoves(
       dead: ident === 'FRUSTRATION' && !frustrationOk,
     });
   }
-  return { moves: out, unreadable };
+  return { moves: out, unreadable, fastUnreadable };
 }
 
 interface Pools {
@@ -229,7 +233,13 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
 
   const frustrationOk =
     Boolean(rc.frustration_removable_now) || (rc.allow_frustration_uids || []).includes(mon.uid);
-  const { moves: known, unreadable } = readKnownMoves(dex, mon, frustrationOk);
+  const { moves: known, unreadable: anyUnreadable, fastUnreadable } = readKnownMoves(dex, mon, frustrationOk);
+  // Raiders are judged on their Fast Attack, so only an unrecognised FAST move stops a Pokémon being trusted as ready.
+  // An unrecognised Charged Move is just a note (it is optional anyway).
+  const unreadable = fastUnreadable;
+  const chargedNote = anyUnreadable && !fastUnreadable
+    ? 'A Charged Move in the export was not recognised: open it in-game to check it'
+    : '';
   const knownFast = known.find((k) => k.slot === 'fast') || null;
   const knownCharged = known.filter((k) => k.slot !== 'fast');
   const hasSecondSlot = knownCharged.length >= 2 || mon.has_third_move;
@@ -306,7 +316,7 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
       route: fastKnown ? 'known' : fastElite ? 'elite_tm' : 'tm',
       replaces: fastKnown ? null : knownFast,
       of: regularFastPool.length || 1,
-      hit: Math.min(regularFastPool.length || 1, Math.max(1, regularFastHits)),
+      hit: 1,
     };
     for (const [cid, cm] of chargedById) {
       if (cm.type !== atype) continue; // an off-type Charged Move does nothing for this team
@@ -321,7 +331,7 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
         route: chargedKnown ? 'known' : chargedElite ? 'elite_tm' : 'tm',
         replaces: slot,
         of: regularChargedPool.length || 1,
-        hit: Math.min(regularChargedPool.length || 1, Math.max(1, regularChargedHits)),
+        hit: regularChargedHits || 1,
       };
       plans.push({
         fast: fastStep,
@@ -464,6 +474,7 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
       currentMoveset,
       tmActions,
       upgradeHint,
+      movesNote: chargedNote || undefined,
       statusLabel: label,
       fastLockNote:
         lockFast && knownFast

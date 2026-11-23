@@ -498,7 +498,7 @@ export function pickRaidMoveset(
   let gain = Number(rc.tm_min_gain_pct ?? 5.0);
   if (unreadable || gain < 0) return [label(best), ''];
 
-  const elite = new Set([...(species.eliteMoves || []), ...(species.legacyMoves || [])].map((e) => String(e).toUpperCase()));
+  const elite = new Set((species.eliteMoves || []).map((e) => String(e).toUpperCase()));
   if (
     [best[1], best[2]].some(
       (mid) => elite.has(String(mid).toUpperCase()) && !have.has(moveLabel(mid).toLowerCase()),
@@ -634,7 +634,7 @@ export function readinessFields(
   const targetSid = mon.evolve_to_sid || currentSid;
   const target = dex.byId.get(targetSid) || mon.species;
 
-  const eliteIds = new Set([...(target.eliteMoves || []), ...(target.legacyMoves || [])].map((e) => String(e).toUpperCase()));
+  const eliteIds = new Set((target.eliteMoves || []).map((e) => String(e).toUpperCase()));
   const poolOf = (sp: PvPokeSpecies) => {
     const s = new Set<string>();
     for (const mid of sp.fastMoves || []) s.add(String(mid).toUpperCase());
@@ -862,6 +862,8 @@ export class Dex {
   raidRankings = new Map<string, [string, number][]>();
   /** Set to "pokebattler" when live PB points are loaded into raidRankings. */
   raidScoreSource: string = "internal";
+  /** Which ranking source each raid type's list really comes from. Types missing here use the internal formula. */
+  raidTypeSource = new Map<string, 'pokebattler' | 'internal'>();
   raidSets = new Map<string, [string | null, string | null]>();
   raidPos = new Map<string, Map<string, [number, number]>>();
 
@@ -879,6 +881,8 @@ export class Dex {
   gmaxType: Map<number, string>;
   dynamaxBases = new Set<string>();
 
+  /** Mega forms confirmed by the game master (null = not verified, e.g. offline). */
+  gmMegaForms: Set<string> | null = null;
   megaSpecies = new Set<string>();
   megaBases = new Map<string, string[]>();
   megaPreEvos = new Map<string, string[]>();
@@ -1000,11 +1004,14 @@ export class Dex {
 
     // Build Mega/Primal indices
     const reqReleased = cfg.mega?.require_released !== false;
+    this.gmMegaForms = data.megaForms && data.megaForms.length > 0 ? new Set(data.megaForms) : null;
     for (const sp of data.gm.pokemon || []) {
       const sid = sp.speciesId;
       const tags = new Set(sp.tags || []);
       if (!isMegaForm(sid, tags) && !sid.includes('_mega')) continue;
       if (reqReleased && sp.released === false) continue;
+      // A form the game master does not list does not exist: it can never be recommended.
+      if (this.gmMegaForms && !this.gmMegaForms.has(sid)) continue;
       const base = megaBaseOf(sid);
       if (!this.byId.has(base)) continue;
       this.megaSpecies.add(sid);

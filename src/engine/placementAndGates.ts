@@ -700,7 +700,7 @@ export function applyMegaGate(
 
     const isCurated =
       !narrowToCurated ||
-      (activeCuratedSids ? activeCuratedSids.has(megaSid.toLowerCase()) : isCuratedMega(megaSid));
+      (activeCuratedSids ? activeCuratedSids.has(megaSid.toLowerCase()) : isCuratedMega(megaSid, dex.megaSpecies));
     let kept = 0;
 
     for (const m of group) {

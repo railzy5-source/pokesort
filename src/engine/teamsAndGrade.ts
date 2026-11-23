@@ -1,4 +1,6 @@
 import { buildRowCosts } from './costTables';
+import { maxWeightAssignment } from './assignment';
+import { assessMegaForm, isDisposedVerdict, megaBaseSid, MEGA_INVEST_ORDER, MEGA_STATUS_LABEL, type MegaStatus } from './megaStatus';
 import {
   BASE_CUPS,
   cleanSpeciesName,
@@ -419,10 +421,20 @@ interface MegaTeamCandidate {
   dps: number;
   active: boolean;
   from: string;
+  /** True ONLY when this exact specimen has Mega Evolved into this exact form. */
   unlocked: boolean;
+  status: MegaStatus;
+  /** May occupy an actual Mega slot (unlocked, kept, not Shadow). */
+  slotEligible: boolean;
+  evidence: string;
 }
 
-function findMegaCandidatesForType(mons: MonModel[], dex: Dex, atype: string): MegaTeamCandidate[] {
+function findMegaCandidatesForType(
+  mons: MonModel[],
+  dex: Dex,
+  atype: string,
+  opts: { minIvPct?: number; minAtkIv?: number } = {},
+): MegaTeamCandidate[] {
   const cands: MegaTeamCandidate[] = [];
   for (const m of mons) {
     if (isOutOfPlay(m) || m.is_shadow || !m.species) continue;
@@ -434,10 +446,13 @@ function findMegaCandidatesForType(mons: MonModel[], dex: Dex, atype: string): M
       ),
     );
     for (const megaSid of sidPool) {
+      // A form the game data does not list does not exist, so it can never be a candidate.
+      if (!dex.megaSpecies.has(megaSid)) continue;
       const boosts = dex.megaBoostTypes(megaSid);
       if (!boosts.includes(atype)) continue;
       const dps = estimatedMegaDps(m, dex, atype, megaSid) ?? 0;
       if (dps <= 0) continue;
+      const assessment = assessMegaForm(m, megaSid, dex, opts);
       cands.push({
         mon: m,
         megaSid,
@@ -447,7 +462,10 @@ function findMegaCandidatesForType(mons: MonModel[], dex: Dex, atype: string): M
         dps,
         active: m.is_currently_mega,
         from: cleanSpeciesName(m.species.speciesName),
-        unlocked: m.has_mega_unlocked,
+        unlocked: assessment.status === 'UNLOCKED' || assessment.status === 'ACTIVE',
+        status: assessment.status,
+        slotEligible: assessment.slotEligible,
+        evidence: assessment.evidence,
       });
     }
   }
@@ -458,6 +476,10 @@ function findMegaCandidatesForType(mons: MonModel[], dex: Dex, atype: string): M
 function compareMegaCandidates(a: MegaTeamCandidate, b: MegaTeamCandidate): number {
   const aUn = a.unlocked ? 1 : 0;
   const bUn = b.unlocked ? 1 : 0;
+  // Among Pokémon that are not unlocked yet, the one closest to being a Mega comes first.
+  if (!aUn && !bUn && MEGA_INVEST_ORDER[a.status] !== MEGA_INVEST_ORDER[b.status]) {
+    return MEGA_INVEST_ORDER[a.status] - MEGA_INVEST_ORDER[b.status];
+  }
   const aReady = a.mon.level >= 25 ? 1 : 0;
   const bReady = b.mon.level >= 25 ? 1 : 0;
   return (
@@ -473,11 +495,14 @@ function findMegaCandidateForType(mons: MonModel[], dex: Dex, atype: string): Me
 }
 
 /**
- * Give every Mega Pokémon exactly ONE raid team. Picking the best Mega for each type on its own let the same Pokémon be
- * the Mega on several teams, and each team wanted different moves, so it would need a TM for every one of them.
- * Here all (type, Pokémon) options are ranked together: each type gets at most one Mega, each Pokémon at most one type.
- * Within a type options are scored against that type's best option, so a Pokémon is not pulled to whichever type simply
- * has the highest raw numbers.
+ * Choose the Mega for each raid type.
+ *
+ *  - ONLY a Pokémon that has really Mega Evolved into that exact form, that you are keeping, may occupy a Mega slot.
+ *    A candidate that still needs evolving or its first Mega Evolution never takes a slot (see `pickMegaInvestments`).
+ *  - Each type gets at most one Mega and each Pokémon serves at most one type.
+ *  - The best OVERALL combination is found with an optimal assignment, not a greedy "best option first" pass.
+ *    Greedy could give a Pokémon to the type where it looked best on its own and leave another type empty, even when a
+ *    different split filled both.
  */
 function assignMegaSlots(
   mons: MonModel[],
@@ -486,59 +511,105 @@ function assignMegaSlots(
   takenUids: ReadonlySet<string> = new Set(),
   cfg?: PogoConfig,
 ): Map<string, MegaTeamCandidate> {
-  // Prefer types where the mega is already READY (no TM). Stops Mega Lucario with Force Palm /
-  // Aura Sphere being yanked to Steel, and Mega Mewtwo X with Psycho Cut / Psychic being forced
-  // onto Fighting when Psychic is free.
   const tmBag = tmBagFrom(null);
-  const options: {
-    type: string;
-    cand: MegaTeamCandidate;
-    rel: number;
-    ready: number;
-    primaryType: number;
-  }[] = [];
+  const gate = { minIvPct: cfg?.mega?.min_iv_pct, minAtkIv: cfg?.mega?.min_atk_iv };
+
+  // One entry per (type, Pokémon): the best form of that Pokémon for that type.
+  interface Edge { cand: MegaTeamCandidate; weight: number }
+  const monIndex = new Map<string, number>();
+  const monsList: string[] = [];
+  const edges: (Edge | null)[][] = [];
   for (const atype of types) {
-    const list = findMegaCandidatesForType(mons, dex, atype).filter((c) => !takenUids.has(c.mon.uid));
+    const list = findMegaCandidatesForType(mons, dex, atype, gate).filter(
+      (c) => c.slotEligible && !takenUids.has(c.mon.uid),
+    );
     const best = Math.max(...list.map((c) => c.dps), 1e-9);
+    const row = new Map<string, Edge>();
     for (const cand of list) {
       const megaSp = dex.byId.get(cand.megaSid) || cand.mon.species;
       let ready = 0;
       if (megaSp && cfg) {
-        const a = assessRaidMon({
-          mon: cand.mon,
-          species: megaSp,
-          dex,
-          cfg,
-          teamType: atype,
-          tmBag,
-          isMega: true,
-        });
+        const a = assessRaidMon({ mon: cand.mon, species: megaSp, dex, cfg, teamType: atype, tmBag, isMega: true });
         if (a && a.status === 'ready') ready = 1;
       }
       const primary = megaSp && (megaSp.types || [])[0]?.toLowerCase() === atype ? 1 : 0;
-      options.push({ type: atype, cand, rel: cand.dps / best, ready, primaryType: primary });
+      // Value of using this Pokémon here: relative strength first, then "already ready", then small tie-breakers.
+      const weight =
+        100 * (cand.dps / best) + 20 * ready + 5 * primary + 3 * Math.min(3, cand.mon.mega_level) + cand.mon.iv_pct / 100;
+      const prev = row.get(cand.mon.uid);
+      if (!prev || weight > prev.weight) row.set(cand.mon.uid, { cand, weight });
+      if (!monIndex.has(cand.mon.uid)) {
+        monIndex.set(cand.mon.uid, monsList.length);
+        monsList.push(cand.mon.uid);
+      }
     }
+    edges.push(types.indexOf(atype) >= 0 ? Array.from(row.values()) : []);
   }
-  options.sort((a, b) => {
-    const aUn = a.cand.unlocked ? 1 : 0;
-    const bUn = b.cand.unlocked ? 1 : 0;
-    return (
-      bUn - aUn ||
-      b.cand.mon.mega_level - a.cand.mon.mega_level ||
-      b.ready - a.ready ||
-      b.rel - a.rel ||
-      b.primaryType - a.primaryType ||
-      b.cand.mon.iv_pct - a.cand.mon.iv_pct
-    );
+
+  const matrix: number[][] = types.map(() => new Array(monsList.length).fill(0));
+  const lookup: (Edge | undefined)[][] = types.map(() => new Array(monsList.length).fill(undefined));
+  edges.forEach((row, ti) => {
+    for (const e of row) {
+      const mi = monIndex.get(e!.cand.mon.uid)!;
+      matrix[ti][mi] = e!.weight;
+      lookup[ti][mi] = e!;
+    }
   });
+
+  const picked = maxWeightAssignment(matrix);
   const byType = new Map<string, MegaTeamCandidate>();
-  const usedUids = new Set<string>();
-  for (const o of options) {
-    if (byType.has(o.type) || usedUids.has(o.cand.mon.uid)) continue;
-    byType.set(o.type, o.cand);
-    usedUids.add(o.cand.mon.uid);
-  }
+  picked.forEach((mi, ti) => {
+    if (mi >= 0 && lookup[ti][mi]) byType.set(types[ti], lookup[ti][mi]!.cand);
+  });
   return byType;
+}
+
+/** Plain-language list of what a Mega candidate still needs. Mega Energy is never in the export, so it is always UNKNOWN. */
+function megaNeedsFor(c: MegaTeamCandidate, dex: Dex): string[] {
+  switch (c.status) {
+    case 'NEEDS_EVOLVE':
+      return [`Evolve into ${spName(dex, megaBaseSid(c.megaSid))}`, 'First Mega Evolution'];
+    case 'NEEDS_FIRST_MEGA':
+      return ['First Mega Evolution'];
+    case 'FORM_UNCONFIRMED':
+      return ['Open it in-game to confirm which Mega form it has unlocked'];
+    case 'BASE_OWNED':
+      return ['A better specimen (the one you own has low IVs)'];
+    default:
+      return [];
+  }
+}
+
+/**
+ * For each type WITHOUT an unlocked Mega: the best Pokémon you own that could become one, and exactly what is missing.
+ * These are investment suggestions only. They never fill a Mega slot and never count as Mega coverage.
+ */
+function pickMegaInvestments(
+  mons: MonModel[],
+  dex: Dex,
+  types: string[],
+  filled: ReadonlyMap<string, MegaTeamCandidate>,
+  takenUids: ReadonlySet<string>,
+  cfg?: PogoConfig,
+): Map<string, MegaTeamCandidate> {
+  const gate = { minIvPct: cfg?.mega?.min_iv_pct, minAtkIv: cfg?.mega?.min_atk_iv };
+  const usedUids = new Set<string>(Array.from(filled.values()).map((c) => c.mon.uid));
+  const out = new Map<string, MegaTeamCandidate>();
+  for (const atype of types) {
+    if (filled.has(atype)) continue;
+    const list = findMegaCandidatesForType(mons, dex, atype, gate).filter(
+      (c) =>
+        !c.slotEligible &&
+        !takenUids.has(c.mon.uid) &&
+        !usedUids.has(c.mon.uid) &&
+        !c.mon.is_shadow &&
+        // a Pokémon marked TRANSFER / TRADE / REVIEW is not something to invest in
+        !isDisposedVerdict(c.mon.verdict) &&
+        c.status !== 'NO_SPECIMEN',
+    );
+    if (list.length > 0) out.set(atype, list[0]);
+  }
+  return out;
 }
 
 export function findMegaForType(mons: MonModel[], dex: Dex, atype: string): RaidTeamTypeBlock['mega'] {
@@ -578,14 +649,16 @@ export function buildRaidTeams(
   const spareFloor = Number(cfg.raid.spare_min_pct ?? 65);
   // How deep into the species ranking of a type an owned Pokémon is still considered.
   const speciesRankCap = Math.max(30, Number(cfg.raid.top_n_species ?? 20));
-  const teamMinLevel = Number((cfg.raid as any).team_min_level ?? cfg.raid.min_level ?? 20);
-  const maxSameSpecies = Math.max(1, Number((cfg.raid as any).max_same_species_per_type ?? 6));
+  const teamMinLevel = Number(cfg.raid.team_min_level ?? cfg.raid.min_level ?? 20);
+  const maxSameSpecies = Math.max(1, Number(cfg.raid.max_same_species_per_type ?? 6));
   const speciesKey = (sid: string) =>
     sid.replace(/_shadow$|_purified$/i, '').replace(/_mega(_[xy])?$|_primal$/i, '');
 
   // One team per Mega Pokémon (see assignMegaSlots), decided once for all types.
   const megaByType = assignMegaSlots(mons, dex, RAID_USEFUL_TYPES, takenUids, cfg);
   const allMegaUids = new Set(Array.from(megaByType.values()).map((c) => c.mon.uid));
+  // Types with no unlocked Mega: the closest candidate and what it still needs (investment only, never a slot).
+  const megaInvestByType = pickMegaInvestments(mons, dex, RAID_USEFUL_TYPES, megaByType, takenUids, cfg);
   // A Pokémon that holds a Max Battle slot is not also a raid team attacker (it keeps its fast move for Max).
   const maxHolderUids = new Set(
     mons.filter((m) => m.max_type && !m.max_reject && canJoinMaxBattle(m)).map((m) => m.uid),
@@ -599,6 +672,10 @@ export function buildRaidTeams(
     sid: string;
     a: RaidAssessment;
     score: number;
+    /** Secondary ordering when scores are equal: prefers evolved / higher-level specimens. */
+    tie: number;
+    /** Where `score` comes from: Pokébattler points or the internal formula. Never mixed inside one type. */
+    source: 'pokebattler' | 'internal';
     pct: number;
     primary: boolean;
   }
@@ -609,12 +686,14 @@ export function buildRaidTeams(
     cands: AttackerCand[];
   }
 
-  const usePb = (dex as any).raidScoreSource === 'pokebattler' ||
-    String((cfg.raid as any)?.ranking_source || '').toLowerCase() === 'pokebattler';
+  // Each type is scored from ITS OWN source: Pokébattler points only for types that really have Pokébattler data,
+  // the internal formula for the rest. The two are never mixed inside one type.
+  const typeUsesPb = (t: string) => dex.raidTypeSource.get(t) === 'pokebattler';
 
   const ctxs: TypeCtx[] = RAID_USEFUL_TYPES.map((atype) => {
     const megaCand = megaByType.get(atype) ?? null;
     // Reference = top ranking score (Pokébattler points when live, else formula refDps).
+    const usePb = typeUsesPb(atype);
     const ref = usePb
       ? topRankingScore(dex.raidRankings, atype) || 1
       : refDps(dex, dex.raidRankings, atype, true) || 1;
@@ -638,34 +717,29 @@ export function buildRaidTeams(
         else if (a.status === 'blocked') movesetFactor = 0.35;
         else movesetFactor = 0.6;
 
-        const speciesPts = hit[1]; // PB points or formula coeff
         let score: number;
-        let displayDps: number;
-        if (usePb && speciesPts > 1) {
-          // Real ranking score from Pokébattler points, scaled to this specimen.
-          score = specimenPbScore(speciesPts, m.level, m.a, movesetFactor);
-          // Keep formula dps on assessment for TM hints; ranking uses score.
-          displayDps = score;
+        if (usePb) {
+          // Pokébattler points for this species, scaled to this specimen (real CPM table, real Attack stat).
+          score = specimenPbScore(hit[1], m.level, m.a, sp.baseStats.atk, movesetFactor);
         } else {
-          score = raidSlotOrderScore(m, a.dps, d);
-          displayDps = a.dps;
+          // Internal formula: rank by the real DPS of the moves it has (or would have), exactly as displayed.
+          score = a.dps;
         }
-
-        // Stash display score onto assessment so entry builder can show it
-        (a as any).rankScore = displayDps;
 
         const cand: AttackerCand = {
           mon: m,
           sid: d,
           a,
           score,
+          tie: raidSlotOrderScore(m, a.dps, d),
+          source: usePb ? 'pokebattler' : 'internal',
           pct: (100 * score) / (ref || 1),
           primary: m.raid_type === atype,
         };
         if (
           !best ||
           RAID_STATUS_ORDER[a.status] < RAID_STATUS_ORDER[best.a.status] ||
-          (a.status === best.a.status && cand.score > best.score)
+          (a.status === best.a.status && (cand.score > best.score || (cand.score === best.score && cand.tie > best.tie)))
         ) {
           best = cand;
         }
@@ -736,7 +810,7 @@ export function buildRaidTeams(
 
   // Order inside each team: ready first, then by combat score (PB points when live, else formula DPS).
   const byCombat = (x: AttackerCand, y: AttackerCand) =>
-    y.score - x.score || y.a.dps - x.a.dps || y.mon.iv_pct - x.mon.iv_pct;
+    y.score - x.score || y.tie - x.tie || y.a.dps - x.a.dps || y.mon.iv_pct - x.mon.iv_pct;
   for (const ctx of ctxs) {
     readyBy.get(ctx.atype)!.sort(byCombat);
     buildBy.get(ctx.atype)!.sort(byCombat);
@@ -789,6 +863,23 @@ export function buildRaidTeams(
           from: megaCand.from,
         }
       : null;
+
+    const inv = !megaCand ? megaInvestByType.get(atype) : undefined;
+    const mega_candidate: RaidTeamTypeBlock['mega_candidate'] = inv
+      ? {
+          id: inv.mon.uid,
+          name: inv.name,
+          from: inv.from,
+          cp: inv.cp,
+          iv: inv.iv,
+          dps: Math.round(inv.dps * 100) / 100,
+          status: inv.status,
+          status_label: MEGA_STATUS_LABEL[inv.status],
+          evidence: inv.evidence,
+          needs: megaNeedsFor(inv, dex),
+          mega_energy: 'UNKNOWN',
+        }
+      : undefined;
 
     const entries: RaidTeamEntry[] = [];
 
@@ -859,6 +950,7 @@ export function buildRaidTeams(
     return {
       type: atype,
       mega,
+      mega_candidate,
       entries,
       fix_queue: fixQueue,
       status_counts: {
@@ -875,6 +967,8 @@ function raidEntryFrom(
     mon: MonModel;
     sid: string;
     a: RaidAssessment;
+    score?: number;
+    source?: 'pokebattler' | 'internal';
   },
   slotKind: 'team' | 'backup',
   slotNum: number,
@@ -892,8 +986,9 @@ function raidEntryFrom(
     name: evolveTo || displaySpecies(m),
     cp: m.cp,
     iv: ivStr(m),
-    // Prefer Pokébattler-scaled rank score when present; else formula DPS.
-    dps: Math.round(Number((c.a as any).rankScore ?? c.a.dps) * 100) / 100,
+    dps: Math.round(c.a.dps * 100) / 100,
+    rank_score: c.score !== undefined ? Math.round(c.score * 100) / 100 : undefined,
+    score_source: c.source,
     level: Math.round(m.level * 10) / 10,
     shadow: m.is_shadow,
     moveset: c.a.currentMoveset,
@@ -911,6 +1006,7 @@ function raidEntryFrom(
     dps_basis: c.a.basis,
     upgrade_hint: c.a.upgradeHint || undefined,
     fast_lock_note: c.a.fastLockNote,
+    moves_note: c.a.movesNote,
   };
 }
 
@@ -1608,30 +1704,49 @@ function buildWishlistPvp(
 function buildWishlistMega(
   dex: Dex,
   owners: ReturnType<typeof ownerIndex>,
+  cfg?: PogoConfig,
 ): ReportJson['grade']['wishlist_all']['mega'] {
   const out: ReportJson['grade']['wishlist_all']['mega'] = {};
+  const gate = { minIvPct: cfg?.mega?.min_iv_pct, minAtkIv: cfg?.mega?.min_atk_iv };
   for (const t of RAID_USEFUL_TYPES) {
     const ranked = dex.megaRankings.get(t) || [];
     let ownedCount = 0;
     const rows: WishlistRow[] = ranked.slice(0, 6).map(([megaSid], i) => {
-      const base = megaSid.replace(/_mega(_x|_y)?$|_primal$/, '');
+      const base = megaBaseSid(megaSid);
       const sp = dex.byId.get(megaSid);
-      const owned = (owners.bySid.get(base) || []).filter((m) => !m.is_shadow);
+      // Every kept Pokémon of this family (the base Pokémon AND its pre-evolutions) is judged for this exact form.
+      const judged = (owners.bySid.get(base) || [])
+        .filter((m) => !m.is_shadow)
+        .map((m) => ({ m, st: assessMegaForm(m, megaSid, dex, gate) }))
+        .sort(
+          (x, y) =>
+            MEGA_INVEST_ORDER[x.st.status] - MEGA_INVEST_ORDER[y.st.status] ||
+            y.m.mega_level - x.m.mega_level ||
+            y.m.iv_pct - x.m.iv_pct ||
+            y.m.cp - x.m.cp,
+        );
       const rev = (owners.undecidedBySid.get(base) || []).filter((m) => !m.is_shadow);
       let status: WishlistRow['status'] = 'HUNT';
       let best: WishlistCopyBrief | null = null;
       const why: string[] = [];
 
-      if (owned.length > 0) {
-        ownedCount++;
-        const pick = [...owned].sort((a, b) => b.iv_pct - a.iv_pct)[0];
+      if (judged.length > 0) {
+        const { m: pick, st } = judged[0];
         best = copyBrief(pick);
-        if (pick.has_mega_unlocked || pick.iv_pct >= 84) {
+        // HAVE means a Pokémon that has REALLY Mega Evolved into this form. An ordinary specimen never counts, however good its IVs.
+        if (st.status === 'UNLOCKED' || st.status === 'ACTIVE') {
+          ownedCount++;
           status = 'HAVE';
-          why.push(pick.has_mega_unlocked ? `Mega Lv${Math.max(1, pick.mega_level)}` : `${pick.iv_pct}% IV ready.`);
+          why.push(`Mega Lv${Math.max(1, pick.mega_level)}.`);
+        } else if (st.status === 'NEEDS_EVOLVE') {
+          status = 'EVOLVE FIRST';
+          why.push(`${st.evidence}; then its first Mega Evolution.`);
+        } else if (st.status === 'NEEDS_FIRST_MEGA' || st.status === 'FORM_UNCONFIRMED') {
+          status = 'CANDIDATE';
+          why.push(`${st.evidence}.`);
         } else {
           status = 'UPGRADE';
-          why.push('Have low-IV copy — catch a better Mega base.');
+          why.push('Only a low-IV copy is owned: catch a better Mega base.');
         }
       } else if (rev.length > 0) {
         best = copyBrief(rev[0]);
@@ -1769,6 +1884,7 @@ export function computeGradeAndDetails(
   coverage: ReportJson['coverage'],
   bagResources?: BagResources,
   curatedMegas?: CuratedMegaTypeRow[],
+  cfg?: PogoConfig,
 ): ReportJson['grade'] {
   let raidWeightSum = 0;
   let raidWeighted = 0;
@@ -1864,7 +1980,7 @@ export function computeGradeAndDetails(
   const owners = ownerIndex(mons, dex);
   const raidWish = buildWishlistRaid(dex, owners, raidTeams, coverage);
   const pvpWish = buildWishlistPvp(dex, owners, caps);
-  const megaWish = buildWishlistMega(dex, owners);
+  const megaWish = buildWishlistMega(dex, owners, cfg);
   const maxWish = buildWishlistMax(dex, owners, maxTeams);
 
   const flexByType = new Map<string, ReportJson['grade']['sections']['raid'][0]['flex']>();
@@ -1928,6 +2044,7 @@ export function computeGradeAndDetails(
       fix_queue: rt?.fix_queue || [],
       status_counts: rt?.status_counts,
       mega: rt?.mega || null,
+      mega_candidate: rt?.mega_candidate,
       best_dps: rw.best_have,
       top_species: rw.top_species,
       top_dps: rw.top_dps,
@@ -2262,7 +2379,7 @@ export function computeGradeAndDetails(
         atype,
         false,
       );
-      const eliteSet = new Set([...(targetSp.eliteMoves || []), ...(targetSp.legacyMoves || [])].map((e) => String(e).toUpperCase()));
+      const eliteSet = new Set((targetSp.eliteMoves || []).map((e) => String(e).toUpperCase()));
       const bestWith = cands[0]?.[0] ?? 0;
       const bestWithout =
         cands.find((c) => !eliteSet.has(c[1].toUpperCase()) && !eliteSet.has(c[2].toUpperCase()))?.[0] ?? 0;
@@ -3036,7 +3153,7 @@ export function buildFullReport(params: {
     let waitCdReason: string | undefined;
     if (m.evolve_to_sid && !isOutOfPlay(m)) {
       const targetSp = dex.byId.get(m.evolve_to_sid.replace(/_shadow$/, ''));
-      const eliteIds = new Set([...(targetSp?.eliteMoves || []), ...(targetSp?.legacyMoves || [])].map((e) => String(e).toUpperCase()));
+      const eliteIds = new Set((targetSp?.eliteMoves || []).map((e) => String(e).toUpperCase()));
       if (targetSp && eliteIds.size > 0) {
         const mvParts = (m.moveset || '')
           .split(' / ')
@@ -3249,6 +3366,7 @@ export function buildFullReport(params: {
     coverage,
     bagResources,
     curatedMegas,
+    cfg,
   );
   const holding = buildHoldSummary(mons, auxMap);
   const briefing = buildBriefing(

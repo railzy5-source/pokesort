@@ -103,7 +103,7 @@ export async function clearRemoteCache(): Promise<void> {
 
 export async function inspectCacheStatus(): Promise<CacheSummary> {
   const gm = await idbGet('pvpoke:gamemaster.json');
-  const pve = await idbGet('pokeminers:pve_and_sizes_v3');
+  const pve = await idbGet('pokeminers:pve_and_sizes_v4');
   const ev = await idbGet('scrapedduck:events');
   const ageDays = gm ? Number(((Date.now() - gm.ts) / 86400000).toFixed(1)) : null;
   return {
@@ -233,7 +233,30 @@ export function collectEvolutionCosts(
   }
 }
 
+
+// ---- Which Mega forms really exist in the game, straight from the game master ----
+const TEMP_EVO_NAMES: Record<string, string> = {
+  TEMP_EVOLUTION_MEGA: 'mega',
+  TEMP_EVOLUTION_MEGA_X: 'mega_x',
+  TEMP_EVOLUTION_MEGA_Y: 'mega_y',
+  TEMP_EVOLUTION_MEGA_Z: 'mega_z',
+  TEMP_EVOLUTION_PRIMAL: 'primal',
+};
+/** Adds e.g. 'charizard_mega_x' for every temporary evolution declared on one pokemonSettings block. */
+export function collectMegaForms(ps: Record<string, unknown>, out: Set<string>): void {
+  const list = ps.tempEvoOverrides;
+  if (!Array.isArray(list)) return;
+  const base = evoSid(ps.pokemonId, ps.form);
+  if (!base) return;
+  for (const raw of list) {
+    if (!raw || typeof raw !== 'object') continue;
+    const suffix = TEMP_EVO_NAMES[String((raw as Record<string, unknown>).tempEvoId || '')];
+    if (suffix) out.add(`${base}_${suffix}`);
+  }
+}
+
 function shrinkPokeMinersMaster(raw: unknown[]): {
+  megaForms: string[];
   evolveCosts: Record<string, { c: number; i: string | null }>;
   pveMoves: Record<string, PveMoveRecord>;
   pvpBuffs: Record<string, { buffs: number[]; buffTarget: string; buffApplyChance: number }>;
@@ -243,6 +266,7 @@ function shrinkPokeMinersMaster(raw: unknown[]): {
   const pvpBuffs: Record<string, { buffs: number[]; buffTarget: string; buffApplyChance: number }> = {};
   const avg = new Map<string, [number, number]>();
   const evolveCosts: Record<string, { c: number; i: string | null }> = {};
+  const megaFormSet = new Set<string>();
   const xxl = new Map<string, number>();
 
   for (const item of raw) {
@@ -303,7 +327,10 @@ function shrinkPokeMinersMaster(raw: unknown[]): {
     }
 
     const ps = data.pokemonSettings as Record<string, unknown> | undefined;
-    if (ps) collectEvolutionCosts(ps, evolveCosts);
+    if (ps) {
+      collectEvolutionCosts(ps, evolveCosts);
+      collectMegaForms(ps, megaFormSet);
+    }
     if (ps && ps.pokedexHeightM !== undefined) {
       let key = String(ps.form || ps.pokemonId || '');
       if (!key && tid.startsWith('V') && tid.includes('_POKEMON_')) {
@@ -347,7 +374,7 @@ function shrinkPokeMinersMaster(raw: unknown[]): {
     };
   }
 
-  return { pveMoves, pvpBuffs, showcaseSizes, evolveCosts };
+  return { pveMoves, pvpBuffs, showcaseSizes, evolveCosts, megaForms: Array.from(megaFormSet) };
 }
 
 export async function loadRemoteGameData(opts: {
@@ -429,6 +456,7 @@ export async function loadRemoteGameData(opts: {
   let pvpBuffs: Record<string, { buffs: number[]; buffTarget: string; buffApplyChance: number }> = {};
   let showcaseSizes = fallback.showcaseSizes;
   let evolveCosts: Record<string, { c: number; i: string | null }> | undefined;
+  let megaForms: string[] | undefined;
   let pveOk = false;
   let sizeOk = false;
 
@@ -437,7 +465,8 @@ export async function loadRemoteGameData(opts: {
     pvpBuffs?: Record<string, { buffs: number[]; buffTarget: string; buffApplyChance: number }>;
     showcaseSizes: Record<string, SizeTableRecord>;
     evolveCosts?: Record<string, { c: number; i: string | null }>;
-  }>('pokeminers:pve_and_sizes_v3');
+    megaForms?: string[];
+  }>('pokeminers:pve_and_sizes_v4');
 
   const pveFresh = pveCache && Date.now() - pveCache.ts <= MAX_AGE_MS;
   if (!refresh && pveFresh && pveCache) {
@@ -445,6 +474,7 @@ export async function loadRemoteGameData(opts: {
     pvpBuffs = pveCache.data.pvpBuffs || {};
     showcaseSizes = pveCache.data.showcaseSizes;
     evolveCosts = pveCache.data.evolveCosts;
+    megaForms = pveCache.data.megaForms;
     pveOk = Object.keys(pveMoves).length > 50;
     sizeOk = Object.keys(showcaseSizes).length > 50;
   } else if (!offlineOnly) {
@@ -457,9 +487,10 @@ export async function loadRemoteGameData(opts: {
           pvpBuffs = shrunk.pvpBuffs;
           showcaseSizes = shrunk.showcaseSizes;
           evolveCosts = shrunk.evolveCosts;
+          megaForms = shrunk.megaForms;
           pveOk = true;
           sizeOk = Object.keys(showcaseSizes).length > 100;
-          await idbSet('pokeminers:pve_and_sizes_v3', shrunk);
+          await idbSet('pokeminers:pve_and_sizes_v4', shrunk);
         }
       }
     } catch {
@@ -542,6 +573,8 @@ export async function loadRemoteGameData(opts: {
     pveMoves,
     pveOk,
     evolveCosts: evolveCosts && Object.keys(evolveCosts).length > 50 ? evolveCosts : undefined,
+    // Only trusted when the game master clearly listed Mega forms (a short list means the data was incomplete).
+    megaForms: megaForms && megaForms.length >= 20 ? megaForms : undefined,
     showcaseSizes,
     sizeOk,
     events,

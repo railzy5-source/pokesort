@@ -198,12 +198,15 @@ export interface PogoConfig {
     boost_other: number;
     tm_min_gain_pct: number;
     elite_tm_min_gain_pct: number;
-    ranking_source?: 'pokebattler' | 'internal';
-    max_same_species_per_type?: number;
-    team_min_level?: number;
     frustration_removable_now?: boolean;
     allow_frustration_uids?: string[];
     spare_min_pct?: number;
+    /** Where raid type rankings come from. Types without Pokébattler data always use the internal formula. */
+    ranking_source?: 'pokebattler' | 'internal';
+    /** At most this many copies of one species on a single type's team. */
+    max_same_species_per_type?: number;
+    /** Pokémon below this level can never take a team or reserve spot. */
+    team_min_level?: number;
   };
   mega: {
     power_level: number;
@@ -416,6 +419,8 @@ export interface RemoteGameData {
   pveOk: boolean;
   /** Real evolution candy costs + requirements from the game master, keyed 'from|to'. Missing = use the built-in table. */
   evolveCosts?: Record<string, { c: number; i: string | null }>;
+  /** Mega / Primal forms that really exist in the game master (e.g. 'charizard_mega_x'). Missing = could not be verified. */
+  megaForms?: string[];
   showcaseSizes: Record<string, SizeTableRecord>;
   sizeOk: boolean;
   events: ScrapedEvent[];
@@ -598,7 +603,6 @@ export interface MonModel {
   deployed_fort_id: string;
   deployed_returned_ms: number | null;
   origin_move: string | null;
-  role_assessments?: RoleAssessment[];
   _dup_excess?: boolean;
 }
 
@@ -680,9 +684,6 @@ export interface ReportMon {
   needs_elite_moves?: string[];
   needs_typed?: NeedsTypedMove[];
   needs_second_move?: boolean;
-  role_assessments?: RoleAssessment[];
-  affordability?: AffordabilityStatus;
-  sequential_affordability?: AffordabilityStatus;
   elite_tm?: boolean;
   status_reason?: string;
   learn_after_evolve?: string[];
@@ -823,6 +824,11 @@ export interface RaidTeamEntry {
   upgrade_hint?: string;
   /** Shown when the Fast Attack is kept on purpose because it decides this Pokémon's Max Move type. */
   fast_lock_note?: string;
+  /** Data-quality note about the moves (for example an unrecognised Charged Move). Not a TM suggestion. */
+  moves_note?: string;
+  /** The score this entry is ranked by. Pokébattler points or internal formula: see `score_source`. NOT a DPS. */
+  rank_score?: number;
+  score_source?: 'pokebattler' | 'internal';
 }
 
 export type RaidEntryStatus = 'ready' | 'needs_tm' | 'blocked';
@@ -842,6 +848,24 @@ export interface RaidTeamTypeBlock {
     active: boolean;
     from: string;
   } | null;
+  /**
+   * Set only when the type has NO unlocked Mega: the closest Pokémon you own and what it still needs.
+   * An investment suggestion. It never fills the Mega slot and never counts as Mega coverage.
+   */
+  mega_candidate?: {
+    id: string;
+    name: string;
+    from: string;
+    cp: number;
+    iv: string;
+    dps: number;
+    status: string;
+    status_label: string;
+    evidence: string;
+    needs: string[];
+    /** Mega Energy balances are not in the export. */
+    mega_energy: 'UNKNOWN';
+  };
   entries: RaidTeamEntry[];
   /** Owned Pokémon that are NOT in the slots but would be worth a TM / event / purify (best first). */
   fix_queue?: RaidTeamEntry[];
@@ -1022,7 +1046,7 @@ export interface WishlistRow {
   rank_plain?: number;
   species: string;
   sid: string;
-  status: 'HAVE' | 'UPGRADE' | 'HUNT' | 'DECIDE' | 'NO DYNAMAX';
+  status: 'HAVE' | 'UPGRADE' | 'HUNT' | 'DECIDE' | 'NO DYNAMAX' | 'CANDIDATE' | 'EVOLVE FIRST';
   best: WishlistCopyBrief | null;
   why: string[];
   tags: string[];
@@ -1112,9 +1136,6 @@ export interface LevelTheseItem {
   why: string[];
   search: string;
   can_build_now?: boolean;
-  affordability?: AffordabilityStatus;
-  sequential_affordability?: AffordabilityStatus;
-  queue_position?: number;
   blockers?: string[];
 }
 
@@ -1273,129 +1294,10 @@ export interface BriefingData {
   };
 }
 
-export type AffordabilityStatus = 'AFFORDABLE' | 'BLOCKED' | 'UNKNOWN';
-
-export interface RoleAssessment {
-  role: 'pvp' | 'raid' | 'mega' | 'max' | 'gym';
-  subRole?: string;
-  status:
-    | 'ready'
-    | 'candidate'
-    | 'needs_tm'
-    | 'needs_elite_tm'
-    | 'needs_second_move'
-    | 'needs_evolution'
-    | 'needs_power_up'
-    | 'unlocked'
-    | 'not_eligible'
-    | 'unknown';
-  score?: number;
-  rank?: number;
-  details: string;
-  movesNeeded?: string[];
-  eliteMovesNeeded?: string[];
-  powerUpTo?: number | null;
-  evolveTo?: string | null;
-  targetCp?: number | null;
-  cost?: {
-    dust: number;
-    candy: number;
-    xl: number;
-    second_move_dust?: number;
-    second_move_candy?: number;
-    evolution_candy?: number;
-    items?: string[];
-    mega_energy?: number;
-    max_particles?: number;
-  };
-  affordability?: AffordabilityStatus;
-}
-
-export interface InvestmentAdvisorRecommendation {
-  role: string;
-  subRole: string;
-  category: 'best_ready_now' | 'best_after_investment' | 'best_long_term';
-  specimen: {
-    id: string;
-    name: string;
-    dex: number;
-    iv: string;
-    iv_pct: number;
-    level: number;
-    cp: number;
-    moves: string;
-    shadow: boolean;
-    purified: boolean;
-    lucky: boolean;
-  };
-  current_performance: {
-    score: number;
-    metric: string;
-    label: string;
-  };
-  best_achievable_performance: {
-    score: number;
-    metric: string;
-    label: string;
-    delta_gain_pct: number;
-  };
-  requirements: {
-    needs_fast_tm: boolean;
-    needs_charged_tm: boolean;
-    needs_elite_fast_tm: boolean;
-    needs_elite_charged_tm: boolean;
-    needs_second_charge_move: boolean;
-    needs_evolution: boolean;
-    evolve_to?: string;
-    needs_mega_unlock: boolean;
-    needs_power_up: boolean;
-    target_level?: number;
-    target_cp?: number;
-    actions: string[];
-  };
-  exact_costs: {
-    stardust: number;
-    candy: number;
-    xl_candy: number;
-    evolution_candy: number;
-    evolution_items: string[];
-    mega_energy: number;
-    max_particles: number;
-    fast_tms: number;
-    charged_tms: number;
-    elite_fast_tms: number;
-    elite_charged_tms: number;
-  };
-  affordability: AffordabilityStatus;
-  affordability_notes: string[];
-  alternatives_considered: {
-    name: string;
-    iv: string;
-    cp: number;
-    level: number;
-    performance: number;
-    comparison: string;
-  }[];
-  verdict_justification: string;
-  advisory_notes: string[];
-}
-
 export interface BagResources {
   stardust: number;
   rare_candy: number;
-  rare_candy_xl: number;
-  /** @deprecated Use rare_candy_xl. Kept for backward compatibility. */
   xl_candy: number;
-  species_candy: Record<string, number>;
-  species_xl_candy: Record<string, number>;
-  species_mega_energy: Record<string, number>;
-  has_stardust_data: boolean;
-  has_candy_data: boolean;
-  has_xl_data: boolean;
-  has_mega_energy_data: boolean;
-  has_tm_data: boolean;
-  has_item_data: boolean;
-  has_mp_data: boolean;
   fast_tms: number;
   charged_tms: number;
   elite_fast_tms: number;
@@ -1799,6 +1701,7 @@ export interface ReportJson {
         fix_queue?: RaidTeamEntry[];
         status_counts?: { ready: number; needs_tm: number; blocked: number };
         mega: RaidTeamTypeBlock['mega'];
+        mega_candidate?: RaidTeamTypeBlock['mega_candidate'];
         best_dps: number;
         top_species: string;
         top_dps: number;

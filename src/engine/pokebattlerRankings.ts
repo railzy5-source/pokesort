@@ -272,6 +272,7 @@ export function applyExternalRaidRankings(
     raidRankings: Map<string, [string, number][]>;
     raidPos: Map<string, Map<string, [number, number]>>;
     raidScoreSource?: string;
+    raidTypeSource?: Map<string, 'pokebattler' | 'internal'>;
   },
   external: TypeRankingMap,
   /** Only replace types that have data; keep internal for the rest. */
@@ -287,6 +288,7 @@ export function applyExternalRaidRankings(
     const pos = new Map<string, [number, number]>();
     lst.forEach(([sid, sc], i) => pos.set(sid, [i + 1, sc]));
     target.raidPos.set(t, pos);
+    target.raidTypeSource?.set(t, 'pokebattler');
     applied++;
   }
   if (!merge) {
@@ -294,6 +296,7 @@ export function applyExternalRaidRankings(
       if (!external.has(t) || !external.get(t)!.length) {
         target.raidRankings.delete(t);
         target.raidPos.delete(t);
+        target.raidTypeSource?.delete(t);
       }
     }
   }
@@ -312,19 +315,22 @@ export function topRankingScore(
 
 /**
  * Scale a species-level Pokébattler points score to one specimen.
- * PB ranks assume L40 15/15/15 best moveset — we adjust for level, ATK IV, and moveset readiness.
+ *
+ * Assumption (documented, not verified against Pokébattler): the species points describe a level-40 attacker with a
+ * 15 Attack IV and its best moveset. The specimen is scaled by the real CPM table and its real Attack stat.
  */
 export function specimenPbScore(
   speciesPoints: number,
   level: number,
   atkIv: number,
+  baseAtk: number,
   movesetFactor: number,
 ): number {
-  if (!(speciesPoints > 0)) return 0;
-  const snapped = Math.max(1, Math.min(51, Math.round(level * 2) / 2));
-  const levelCpm = CPM[snapped] ?? 0.7903;
-  const cpm40 = CPM[40] ?? 0.7903;
-  const levelFactor = levelCpm / cpm40;
-  const atkFactor = (15 + Math.max(0, Math.min(15, atkIv))) / 30;
+  if (!(speciesPoints > 0) || !(baseAtk > 0)) return 0;
+  const cpmAt = (lv: number) => CPM[Math.min(50, Math.max(1, Math.round(lv * 2) / 2))] || 0;
+  const ref = cpmAt(40);
+  if (!(ref > 0)) return 0;
+  const levelFactor = cpmAt(level) / ref;
+  const atkFactor = (baseAtk + Math.max(0, Math.min(15, atkIv))) / (baseAtk + 15);
   return speciesPoints * levelFactor * atkFactor * Math.max(0.05, movesetFactor);
 }

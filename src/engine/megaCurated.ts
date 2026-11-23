@@ -1,179 +1,100 @@
 import { MonModel } from './types';
+import { assessMegaForm, megaBaseSid, MEGA_INVEST_ORDER, SLOT_STATUSES, type MegaStatus } from './megaStatus';
 import { Dex } from './pveModel';
 import { cleanSpeciesName } from './defaultConfig';
 import { ivStr } from './pgsParser';
 
 export type MegaTier = 'S' | 'A+' | 'A' | 'B+' | 'B' | 'C';
 
-/**
- * Legitimate, canonical Pokémon GO Mega & Primal forms supported in the Game Master.
- * Speculative, fan-made, or unreleased forms are strictly excluded.
- */
-export const GAME_MASTER_MEGA_SIDS: ReadonlySet<string> = new Set([
-  'venusaur_mega',
-  'charizard_mega_x',
-  'charizard_mega_y',
-  'blastoise_mega',
-  'beedrill_mega',
-  'pidgeot_mega',
-  'alakazam_mega',
-  'slowbro_mega',
-  'gengar_mega',
-  'kangaskhan_mega',
-  'pinsir_mega',
-  'gyarados_mega',
-  'aerodactyl_mega',
-  'mewtwo_mega_x',
-  'mewtwo_mega_y',
-  'ampharos_mega',
-  'steelix_mega',
-  'scizor_mega',
-  'heracross_mega',
-  'houndoom_mega',
-  'tyranitar_mega',
-  'sceptile_mega',
-  'blaziken_mega',
-  'swampert_mega',
-  'gardevoir_mega',
-  'sableye_mega',
-  'mawile_mega',
-  'aggron_mega',
-  'medicham_mega',
-  'manectric_mega',
-  'sharpedo_mega',
-  'camerupt_mega',
-  'altaria_mega',
-  'banette_mega',
-  'absol_mega',
-  'glalie_mega',
-  'salamence_mega',
-  'metagross_mega',
-  'latias_mega',
-  'latios_mega',
-  'kyogre_primal',
-  'groudon_primal',
-  'rayquaza_mega',
-  'lopunny_mega',
-  'garchomp_mega',
-  'lucario_mega',
-  'abomasnow_mega',
-  'gallade_mega',
-  'audino_mega',
-  'diancie_mega',
-]);
-
-/**
- * Mega Energy requirements: [firstTimeCost, subsequentCost]
- */
-export const MEGA_ENERGY_COSTS: Record<string, [number, number]> = {
-  beedrill_mega: [100, 20],
-  pidgeot_mega: [100, 20],
-  houndoom_mega: [100, 20],
-  banette_mega: [100, 20],
-  sableye_mega: [100, 20],
-
-  venusaur_mega: [200, 40],
-  charizard_mega_x: [200, 40],
-  charizard_mega_y: [200, 40],
-  blastoise_mega: [200, 40],
-  alakazam_mega: [200, 40],
-  slowbro_mega: [200, 40],
-  gengar_mega: [200, 40],
-  kangaskhan_mega: [200, 40],
-  pinsir_mega: [200, 40],
-  gyarados_mega: [200, 40],
-  aerodactyl_mega: [200, 40],
-  ampharos_mega: [200, 40],
-  steelix_mega: [200, 40],
-  scizor_mega: [200, 40],
-  heracross_mega: [200, 40],
-  sceptile_mega: [200, 40],
-  blaziken_mega: [200, 40],
-  swampert_mega: [200, 40],
-  gardevoir_mega: [200, 40],
-  mawile_mega: [200, 40],
-  aggron_mega: [200, 40],
-  medicham_mega: [200, 40],
-  manectric_mega: [200, 40],
-  sharpedo_mega: [200, 40],
-  camerupt_mega: [200, 40],
-  altaria_mega: [200, 40],
-  absol_mega: [200, 40],
-  glalie_mega: [200, 40],
-  abomasnow_mega: [200, 40],
-  gallade_mega: [200, 40],
-  lopunny_mega: [200, 40],
-  audino_mega: [200, 40],
-  lucario_mega: [200, 40],
-  metagross_mega: [200, 40],
-
-  tyranitar_mega: [300, 60],
-  salamence_mega: [300, 60],
-  garchomp_mega: [300, 60],
-  latios_mega: [300, 60],
-  latias_mega: [300, 60],
-  diancie_mega: [300, 60],
-
-  rayquaza_mega: [400, 80],
-  kyogre_primal: [400, 80],
-  groudon_primal: [400, 80],
-  mewtwo_mega_x: [400, 80],
-  mewtwo_mega_y: [400, 80],
-};
-
 export const POKEBASE_MEGA_TIERS: Record<string, MegaTier> = {
-  // S tier: Absolute best in class
+  // S tier (21)
   charizard_mega_y: 'S',
   gengar_mega: 'S',
   mewtwo_mega_x: 'S',
   mewtwo_mega_y: 'S',
   blaziken_mega: 'S',
+  absol_mega_z: 'S',
   kyogre_primal: 'S',
   groudon_primal: 'S',
   rayquaza_mega: 'S',
   lucario_mega: 'S',
+  lucario_mega_z: 'S',
+  heatran_mega: 'S',
+  chandelure_mega: 'S',
+  chesnaught_mega: 'S',
+  delphox_mega: 'S',
+  greninja_mega: 'S',
+  floette_eternal_mega: 'S',
+  zygarde_mega: 'S',
   diancie_mega: 'S',
-  metagross_mega: 'S',
-
-  // A+ tier: Top tier powerhouses
+  zeraora_mega: 'S',
+  baxcalibur_mega: 'S',
+  // A+ tier (10)
+  starmie_mega: 'A+',
+  meganium_mega: 'A+',
   tyranitar_mega: 'A+',
   sceptile_mega: 'A+',
   gardevoir_mega: 'A+',
   absol_mega: 'A+',
+  metagross_mega: 'A+',
   garchomp_mega: 'A+',
-  swampert_mega: 'A+',
-  salamence_mega: 'A+',
-
-  // A tier: Highly competitive raid attackers
+  excadrill_mega: 'A+',
+  glimmora_mega: 'A+',
+  // A tier (24)
   venusaur_mega: 'A',
   beedrill_mega: 'A',
+  raichu_mega_y: 'A',
   alakazam_mega: 'A',
   aerodactyl_mega: 'A',
+  dragonite_mega: 'A',
+  feraligatr_mega: 'A',
   heracross_mega: 'A',
   houndoom_mega: 'A',
+  swampert_mega: 'A',
   banette_mega: 'A',
   glalie_mega: 'A',
+  salamence_mega: 'A',
   latios_mega: 'A',
+  staraptor_mega: 'A',
   abomasnow_mega: 'A',
   gallade_mega: 'A',
-
-  // B+ tier: Solid budget / versatile dual type
+  froslass_mega: 'A',
+  darkrai_mega: 'A',
+  emboar_mega: 'A',
+  eelektross_mega: 'A',
+  magearna_mega: 'A',
+  falinks_mega: 'A',
+  scovillain_mega: 'A',
+  // B+ tier (18)
   charizard_mega_x: 'B+',
   blastoise_mega: 'B+',
   pidgeot_mega: 'B+',
+  raichu_mega_x: 'B+',
+  victreebel_mega: 'B+',
   pinsir_mega: 'B+',
   gyarados_mega: 'B+',
   ampharos_mega: 'B+',
   scizor_mega: 'B+',
+  skarmory_mega: 'B+',
   manectric_mega: 'B+',
   latias_mega: 'B+',
   lopunny_mega: 'B+',
-
-  // B tier: Bulk / niche coverage
+  garchomp_mega_z: 'B+',
+  golurk_mega: 'B+',
+  meowstic_mega: 'B+',
+  hawlucha_mega: 'B+',
+  golisopod_mega: 'B+',
+  // B tier (8)
   aggron_mega: 'B',
   camerupt_mega: 'B',
-
-  // C tier: Defensive / candy boost only
+  scolipede_mega: 'B',
+  pyroar_mega: 'B',
+  barbaracle_mega: 'B',
+  dragalge_mega: 'B',
+  crabominable_mega: 'B',
+  drampa_mega: 'B',
+  // C tier (14)
+  clefable_mega: 'C',
   slowbro_mega: 'C',
   kangaskhan_mega: 'C',
   steelix_mega: 'C',
@@ -182,7 +103,11 @@ export const POKEBASE_MEGA_TIERS: Record<string, MegaTier> = {
   medicham_mega: 'C',
   sharpedo_mega: 'C',
   altaria_mega: 'C',
+  chimecho_mega: 'C',
   audino_mega: 'C',
+  scrafty_mega: 'C',
+  malamar_mega: 'C',
+  tatsugiri_mega: 'C',
 };
 
 const TIER_ORDER: Record<MegaTier, number> = {
@@ -196,9 +121,7 @@ const TIER_ORDER: Record<MegaTier, number> = {
 
 export function getPokebaseMegaTier(sid?: string | null): MegaTier | null {
   if (!sid) return null;
-  const s = sid.toLowerCase();
-  if (!GAME_MASTER_MEGA_SIDS.has(s)) return null;
-  return POKEBASE_MEGA_TIERS[s] || null;
+  return POKEBASE_MEGA_TIERS[sid.toLowerCase()] || null;
 }
 
 export function megaTierScore(tier?: MegaTier | null): number {
@@ -226,14 +149,6 @@ export interface CuratedMegaTypeEntry {
   alternatives?: CuratedMegaOption[];
 }
 
-export type MegaSpecimenStatus =
-  | 'no_specimen'
-  | 'suitable_base'
-  | 'needs_evolution'
-  | 'needs_first_mega'
-  | 'mega_unlocked'
-  | 'mega_active';
-
 export interface CuratedMegaSpecimenBrief {
   id: string;
   name: string;
@@ -245,13 +160,17 @@ export interface CuratedMegaSpecimenBrief {
   verdict: string;
   is_pre_evo: boolean;
   role?: string;
-  specimen_status: MegaSpecimenStatus;
 }
 
 export interface CuratedMegaOptionStatus extends CuratedMegaOption {
+  /** Owns a Pokémon you are keeping that could become (or already is) this Mega. */
   owned: boolean;
+  /** True ONLY when a retained specimen has really Mega Evolved into this exact form. */
   unlocked: boolean;
-  specimen_status: MegaSpecimenStatus;
+  /** The exact status of the best specimen for this form. */
+  status: MegaStatus;
+  /** False when the game master does not list this form: it is never recommended. */
+  supported: boolean;
   bestSpecimen: CuratedMegaSpecimenBrief | null;
   fallbackActive?: boolean;
 }
@@ -272,13 +191,13 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
     icon: '🐛',
     displayName: 'Bug',
     expensive: {
-      sid: 'heracross_mega',
-      name: 'Mega Heracross',
-      energy: 200,
+      sid: 'beedrill_mega',
+      name: 'Mega Beedrill',
+      energy: 100,
       costTier: 'expensive',
-      costLabel: '200 Energy · Megahorn',
-      highlightMove: 'Megahorn / Close Combat',
-      roleNote: 'Top-tier dual Bug/Fighting powerhouse with massive attack stats.',
+      costLabel: '100 Energy · Fell Stinger+',
+      highlightMove: 'Fell Stinger+ / X-Scissor',
+      roleNote: 'Currently the #1 Bug attacker with Fell Stinger+, though Bug types are rarely needed in legendary raids.',
     },
     cheap: {
       sid: 'beedrill_mega',
@@ -291,13 +210,12 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
     },
     alternatives: [
       {
-        sid: 'pinsir_mega',
-        name: 'Mega Pinsir',
+        sid: 'heracross_mega',
+        name: 'Mega Heracross',
         energy: 200,
         costTier: 'cheap',
         costLabel: '200 Energy',
-        highlightMove: 'X-Scissor',
-        roleNote: 'Aggressive pure Bug attacker alternative.',
+        roleNote: 'A-tier dual Bug/Fighting powerhouse with Megahorn & Close Combat.',
       },
       {
         sid: 'scizor_mega',
@@ -305,8 +223,15 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
         energy: 200,
         costTier: 'cheap',
         costLabel: '200 Energy',
-        highlightMove: 'X-Scissor',
         roleNote: 'Accessible dual Bug/Steel defensive hybrid booster.',
+      },
+      {
+        sid: 'pinsir_mega',
+        name: 'Mega Pinsir',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy',
+        roleNote: 'Aggressive pure Bug attacker alternative.',
       },
     ],
   },
@@ -315,13 +240,13 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
     icon: '🌑',
     displayName: 'Dark',
     expensive: {
-      sid: 'tyranitar_mega',
-      name: 'Mega Tyranitar',
-      energy: 300,
+      sid: 'houndoom_mega',
+      name: 'Mega Houndoom',
+      energy: 100,
       costTier: 'expensive',
-      costLabel: '300 Energy · Brutal Swing',
-      highlightMove: 'Brutal Swing',
-      roleNote: 'Premier Dark/Rock tankiness with top-tier Brutal Swing DPS.',
+      costLabel: '100 Energy · Dark Pulse+',
+      highlightMove: 'Dark Pulse+',
+      roleNote: 'Ranks as the #1 Dark attacker with Dark Pulse+, outperforming even Mega Tyranitar in raw offensive DPS.',
     },
     cheap: {
       sid: 'houndoom_mega',
@@ -329,18 +254,18 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
       energy: 100,
       costTier: 'cheap',
       costLabel: '100 Energy (Budget)',
-      highlightMove: 'Foul Play',
-      roleNote: 'Its first evolution is notably cheap at only 100 Mega Energy, providing accessible Dark DPS.',
+      highlightMove: 'Foul Play / Dark Pulse',
+      roleNote: 'Its first evolution is notably cheap at only 100 Mega Energy.',
     },
     alternatives: [
       {
-        sid: 'gyarados_mega',
-        name: 'Mega Gyarados',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy · Crunch',
-        highlightMove: 'Bite / Crunch',
-        roleNote: 'Bulky Water/Dark booster that shreds Psychic and Ghost bosses.',
+        sid: 'tyranitar_mega',
+        name: 'Mega Tyranitar',
+        energy: 300,
+        costTier: 'expensive',
+        costLabel: '300 Energy · Brutal Swing',
+        highlightMove: 'Brutal Swing',
+        roleNote: 'A+ tier Dark/Rock tankiness with top-tier Brutal Swing DPS.',
       },
       {
         sid: 'absol_mega',
@@ -348,8 +273,8 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
         energy: 200,
         costTier: 'cheap',
         costLabel: '200 Energy',
-        highlightMove: 'Dark Pulse / Payback',
-        roleNote: 'Pure Dark glass-cannon raid attacker.',
+        highlightMove: 'Brutal Swing / Dark Pulse',
+        roleNote: 'A+ tier pure Dark glass-cannon raid attacker.',
       },
     ],
   },
@@ -363,8 +288,8 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
       energy: 400,
       costTier: 'expensive',
       costLabel: '400 Energy · Meteorite Required',
-      highlightMove: 'Breaking Swipe / Outrage',
-      roleNote: 'The undisputed #1 overall attacker in Pokémon GO.',
+      highlightMove: 'Dragon Ascent / Breaking Swipe',
+      roleNote: 'The undisputed #1 overall and Dragon attacker, but requires a Meteorite and a massive 400 energy investment.',
     },
     cheap: {
       sid: 'salamence_mega',
@@ -373,7 +298,7 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
       costTier: 'cheap',
       costLabel: '300 Energy',
       highlightMove: 'Outrage',
-      roleNote: 'High DPS Dragon and Flying attacker with excellent raid accessibility.',
+      roleNote: 'A strong, more accessible substitute that performs exceptionally well as both a Dragon and Flying attacker.',
     },
     alternatives: [
       {
@@ -383,25 +308,16 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
         costTier: 'expensive',
         costLabel: '300 Energy',
         highlightMove: 'Outrage / Earth Power',
-        roleNote: 'Dual Dragon/Ground powerhouse with massive bulk.',
+        roleNote: 'A+ tier dual Dragon/Ground powerhouse with massive raid bulk.',
       },
       {
-        sid: 'latios_mega',
-        name: 'Mega Latios',
-        energy: 300,
-        costTier: 'expensive',
-        costLabel: '300 Energy',
-        highlightMove: 'Dragon Claw',
-        roleNote: 'Fast Dragon/Psychic hybrid attacker.',
-      },
-      {
-        sid: 'charizard_mega_x',
-        name: 'Mega Charizard X',
+        sid: 'dragonite_mega',
+        name: 'Mega Dragonite',
         energy: 200,
         costTier: 'cheap',
         costLabel: '200 Energy',
-        highlightMove: 'Dragon Claw',
-        roleNote: 'Budget 200-energy Fire/Dragon hybrid booster.',
+        highlightMove: 'Dragon Tail / Outrage',
+        roleNote: 'A-tier Dragon/Flying generalist with strong bulk and candy utility.',
       },
     ],
   },
@@ -410,13 +326,13 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
     icon: '⚡',
     displayName: 'Electric',
     expensive: {
-      sid: 'manectric_mega',
-      name: 'Mega Manectric',
-      energy: 200,
+      sid: 'raichu_mega_y',
+      name: 'Mega Raichu Y',
+      energy: 300,
       costTier: 'expensive',
-      costLabel: '200 Energy · Wild Charge',
-      highlightMove: 'Charge Beam / Wild Charge',
-      roleNote: 'The highest pure Electric raid DPS Mega in Pokémon GO.',
+      costLabel: '300 Energy · High Investment',
+      highlightMove: 'Volt Switch / Wild Charge',
+      roleNote: 'Boasts top-tier Electric DPS, though it requires significant candy and stardust investment.',
     },
     cheap: {
       sid: 'ampharos_mega',
@@ -424,18 +340,18 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
       energy: 200,
       costTier: 'cheap',
       costLabel: '200 Energy',
-      highlightMove: 'Volt Switch / Zap Cannon',
-      roleNote: 'Budget-friendly option at 200 energy, useful for boosting Electric & Dragon-type candy.',
+      highlightMove: 'Zap Cannon / Thunder Punch',
+      roleNote: 'A budget-friendly option at 200 energy, useful for boosting Electric & Dragon-type candy.',
     },
     alternatives: [
       {
-        sid: 'charizard_mega_x',
-        name: 'Mega Charizard X',
+        sid: 'manectric_mega',
+        name: 'Mega Manectric',
         energy: 200,
         costTier: 'cheap',
         costLabel: '200 Energy',
-        highlightMove: 'Dragon Breath',
-        roleNote: 'Dual utility booster.',
+        highlightMove: 'Wild Charge',
+        roleNote: 'Strong pure Electric glass-cannon raid attacker.',
       },
     ],
   },
@@ -448,18 +364,18 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
       name: 'Mega Gardevoir',
       energy: 200,
       costTier: 'expensive',
-      costLabel: '200 Energy · Premier Fairy DPS',
-      highlightMove: 'Charm / Dazzling Gleam',
-      roleNote: 'The premier Fairy attacker and dual Psychic booster with unmatched Fairy raid DPS.',
+      costLabel: '200 Energy · Premier DPS',
+      highlightMove: 'Dazzling Gleam',
+      roleNote: 'The premier Fairy attacker and a strong Psychic option with unmatched Fairy raid DPS.',
     },
     cheap: {
-      sid: 'altaria_mega',
-      name: 'Mega Altaria',
+      sid: 'gardevoir_mega',
+      name: 'Mega Gardevoir',
       energy: 200,
       costTier: 'cheap',
       costLabel: '200 Energy',
       highlightMove: 'Dazzling Gleam',
-      roleNote: 'Accessible dual Dragon/Fairy type candy booster.',
+      roleNote: 'At 200 energy, relatively accessible for such a high-impact type booster.',
     },
     alternatives: [
       {
@@ -468,17 +384,8 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
         energy: 300,
         costTier: 'expensive',
         costLabel: '300 Energy · Mythical',
-        highlightMove: 'Moonblast / Rock Slide',
+        highlightMove: 'Rock Slide / Moonblast',
         roleNote: 'Mythical Rock/Fairy with supreme offensive firepower.',
-      },
-      {
-        sid: 'mawile_mega',
-        name: 'Mega Mawile',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Play Rough',
-        roleNote: 'Dual Steel/Fairy defensive booster.',
       },
     ],
   },
@@ -487,13 +394,13 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
     icon: '🥊',
     displayName: 'Fighting',
     expensive: {
-      sid: 'lucario_mega',
-      name: 'Mega Lucario',
-      energy: 200,
+      sid: 'mewtwo_mega_x',
+      name: 'Mega Mewtwo X',
+      energy: 400,
       costTier: 'expensive',
-      costLabel: '200 Energy · Force Palm',
-      highlightMove: 'Force Palm / Aura Sphere',
-      roleNote: 'Top-tier Fighting/Steel attacker with premier Force Palm & Aura Sphere DPS.',
+      costLabel: '400 Energy · Rare Raid Legend',
+      highlightMove: 'Dynamic Punch+',
+      roleNote: 'The gold standard for Fighting raids with Dynamic Punch+, though Mewtwo energy is expensive and rare.',
     },
     cheap: {
       sid: 'blaziken_mega',
@@ -501,27 +408,18 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
       energy: 200,
       costTier: 'cheap',
       costLabel: '200 Energy',
-      highlightMove: 'Counter / Focus Blast',
-      roleNote: 'Tremendous dual Fire/Fighting damage output at 200 energy.',
+      highlightMove: 'Focus Blast / Counter',
+      roleNote: 'A solid Fighting attacker that costs 200 energy to first evolve and hits incredibly hard.',
     },
     alternatives: [
       {
-        sid: 'heracross_mega',
-        name: 'Mega Heracross',
+        sid: 'lucario_mega',
+        name: 'Mega Lucario',
         energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Counter / Close Combat',
-        roleNote: 'Heavy-hitting dual Bug/Fighting alternative.',
-      },
-      {
-        sid: 'lopunny_mega',
-        name: 'Mega Lopunny',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Double Kick / Focus Blast',
-        roleNote: 'Normal/Fighting dual candy booster.',
+        costTier: 'expensive',
+        costLabel: '200 Energy · Force Palm',
+        highlightMove: 'Aura Sphere / Force Palm',
+        roleNote: 'Top-tier Fighting/Steel attacker with Force Palm & Aura Sphere.',
       },
     ],
   },
@@ -530,33 +428,153 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
     icon: '🔥',
     displayName: 'Fire',
     expensive: {
-      sid: 'charizard_mega_y',
-      name: 'Mega Charizard Y',
+      sid: 'delphox_mega',
+      name: 'Mega Delphox',
       energy: 200,
       costTier: 'expensive',
       costLabel: '200 Energy · Blast Burn',
       highlightMove: 'Fire Spin / Blast Burn',
-      roleNote: 'Supreme Fire DPS and dual Flying candy utility.',
+      roleNote: 'Currently ranked as the top Fire attacker, surpassing other Fire Megas in raid DPS.',
     },
     cheap: {
       sid: 'houndoom_mega',
-      name: 'Mega Houndoom',
+      name: 'Mega Houndoom (or Charizard)',
       energy: 100,
       costTier: 'cheap',
-      costLabel: '100 Energy (Cheapest Fire)',
-      highlightMove: 'Fire Fang / Flamethrower',
-      roleNote: 'The cheapest Fire Mega at only 100 energy, providing fast access to Fire boosts.',
+      costLabel: '100–200 Energy',
+      highlightMove: 'Flamethrower / Blast Burn',
+      roleNote: 'Houndoom costs only 100 energy, while Charizard costs 200 but offers dual Fire/Flying utility.',
     },
     alternatives: [
+      {
+        sid: 'charizard_mega_y',
+        name: 'Mega Charizard Y',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy · Blast Burn',
+        highlightMove: 'Blast Burn',
+        roleNote: 'Dual Fire/Flying raid powerhouse.',
+      },
       {
         sid: 'blaziken_mega',
         name: 'Mega Blaziken',
         energy: 200,
         costTier: 'cheap',
         costLabel: '200 Energy',
-        highlightMove: 'Fire Spin / Blast Burn',
+        highlightMove: 'Blast Burn',
         roleNote: 'Dual Fire/Fighting high-DPS raid starter.',
       },
+    ],
+  },
+  ghost: {
+    type: 'ghost',
+    icon: '👻',
+    displayName: 'Ghost',
+    expensive: {
+      sid: 'gengar_mega',
+      name: 'Mega Gengar',
+      energy: 200,
+      costTier: 'expensive',
+      costLabel: '200 Energy · Supreme DPS',
+      highlightMove: 'Shadow Ball / Lick',
+      roleNote: 'Despite being fragile, its damage output makes it one of the absolute best Ghost attackers available.',
+    },
+    cheap: {
+      sid: 'gengar_mega',
+      name: 'Mega Gengar',
+      energy: 200,
+      costTier: 'cheap',
+      costLabel: '200 Energy',
+      highlightMove: 'Shadow Ball',
+      roleNote: 'At 200 energy, it is a very reasonable investment for the damage it provides.',
+    },
+    alternatives: [
+      {
+        sid: 'chandelure_mega',
+        name: 'Mega Chandelure',
+        energy: 200,
+        costTier: 'expensive',
+        costLabel: '200 Energy · S-Tier',
+        highlightMove: 'Shadow Ball / Overheat',
+        roleNote: 'S-tier Ghost/Fire titan with top-end Shadow Ball DPS.',
+      },
+      {
+        sid: 'banette_mega',
+        name: 'Mega Banette',
+        energy: 100,
+        costTier: 'cheap',
+        costLabel: '100 Energy',
+        highlightMove: 'Shadow Claw / Shadow Ball',
+        roleNote: 'A-tier 100-energy Ghost budget booster.',
+      },
+    ],
+  },
+  grass: {
+    type: 'grass',
+    icon: '🌿',
+    displayName: 'Grass',
+    expensive: {
+      sid: 'victreebel_mega',
+      name: 'Mega Victreebel',
+      energy: 200,
+      costTier: 'expensive',
+      costLabel: '200 Energy · High Stats',
+      highlightMove: 'Magical Leaf / Sludge Bomb',
+      roleNote: 'A top-tier Grass and Poison attacker with high offensive stats.',
+    },
+    cheap: {
+      sid: 'venusaur_mega',
+      name: 'Mega Venusaur',
+      energy: 200,
+      costTier: 'cheap',
+      costLabel: '200 Energy',
+      highlightMove: 'Frenzy Plant',
+      roleNote: 'A-tier classic at 200 energy for Grass & Poison boosting with great defensive bulk.',
+    },
+    alternatives: [
+      {
+        sid: 'chesnaught_mega',
+        name: 'Mega Chesnaught',
+        energy: 200,
+        costTier: 'expensive',
+        costLabel: '200 Energy · S-Tier',
+        highlightMove: 'Frenzy Plant',
+        roleNote: 'S-tier Grass/Fighting powerhouse.',
+      },
+      {
+        sid: 'sceptile_mega',
+        name: 'Mega Sceptile',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy · A+ Tier',
+        highlightMove: 'Frenzy Plant',
+        roleNote: 'A+ tier dual Grass/Dragon attacker with blistering Frenzy Plant speed.',
+      },
+    ],
+  },
+  ground: {
+    type: 'ground',
+    icon: '🟤',
+    displayName: 'Ground',
+    expensive: {
+      sid: 'garchomp_mega',
+      name: 'Mega Garchomp',
+      energy: 300,
+      costTier: 'expensive',
+      costLabel: '300 Energy · Earth Power',
+      highlightMove: 'Earth Power',
+      roleNote: 'A top-tier Dragon and Ground attacker for high-investment players with massive bulk.',
+    },
+    cheap: {
+      sid: 'swampert_mega',
+      name: 'Mega Swampert',
+      energy: 200,
+      costTier: 'cheap',
+      costLabel: '200 Energy',
+      highlightMove: 'Earthquake / Hydro Cannon',
+      roleNote: 'A solid Water/Ground option at 200 energy providing dual raid coverage.',
+    },
+    alternatives: [
       {
         sid: 'groudon_primal',
         name: 'Primal Groudon',
@@ -564,8 +582,281 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
         costTier: 'expensive',
         costLabel: '400 Primal Energy',
         isPrimal: true,
-        highlightMove: 'Fire Punch / Precipice Blades',
-        roleNote: 'Permanent sunny weather boost for Fire and Ground raids.',
+        highlightMove: 'Precipice Blades',
+        roleNote: 'Permanent sunny weather boost and undisputed #1 Ground titan.',
+      },
+    ],
+  },
+  ice: {
+    type: 'ice',
+    icon: '🧊',
+    displayName: 'Ice',
+    expensive: {
+      sid: 'mewtwo_mega_y',
+      name: 'Mega Mewtwo Y',
+      energy: 400,
+      costTier: 'expensive',
+      costLabel: '400 Energy · Coverage',
+      highlightMove: 'Ice Beam',
+      roleNote: 'While a Psychic type, its coverage moves make it a very strong Ice attacker in a pinch.',
+    },
+    cheap: {
+      sid: 'glalie_mega',
+      name: 'Mega Glalie',
+      energy: 200,
+      costTier: 'cheap',
+      costLabel: '200 Energy',
+      highlightMove: 'Avalanche',
+      roleNote: 'A dedicated Ice-type Mega that is more accessible than top-tier generalists.',
+    },
+    alternatives: [
+      {
+        sid: 'abomasnow_mega',
+        name: 'Mega Abomasnow',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy · A-Tier',
+        highlightMove: 'Weather Ball Ice',
+        roleNote: 'A-tier dual Grass/Ice Mega — matches Mega Glalie tier and boosts Ice & Grass candy.',
+      },
+    ],
+  },
+  normal: {
+    type: 'normal',
+    icon: '⚪',
+    displayName: 'Normal',
+    expensive: {
+      sid: 'kangaskhan_mega',
+      name: 'Mega Kangaskhan',
+      energy: 200,
+      costTier: 'expensive',
+      costLabel: '200 Energy · Regional Raid',
+      highlightMove: 'Body Slam',
+      roleNote: 'A rare and costly option, but useful for Normal-type candy boosting.',
+    },
+    cheap: {
+      sid: 'pidgeot_mega',
+      name: 'Mega Pidgeot',
+      energy: 100,
+      costTier: 'cheap',
+      costLabel: '100 Energy (Cheapest)',
+      highlightMove: 'Brave Bird',
+      roleNote: 'Costs only 100 energy and provides Flying-type coverage as a bonus.',
+    },
+  },
+  poison: {
+    type: 'poison',
+    icon: '☠️',
+    displayName: 'Poison',
+    expensive: {
+      sid: 'victreebel_mega',
+      name: 'Mega Victreebel',
+      energy: 200,
+      costTier: 'expensive',
+      costLabel: '200 Energy · Sludge Bomb',
+      highlightMove: 'Sludge Bomb',
+      roleNote: 'Currently the #1 Poison attacker alongside its Grass role, shredding Fairy & Grass raid bosses.',
+    },
+    cheap: {
+      sid: 'beedrill_mega',
+      name: 'Mega Beedrill',
+      energy: 100,
+      costTier: 'cheap',
+      costLabel: '100 Energy',
+      highlightMove: 'Sludge Bomb',
+      roleNote: 'At 100 energy, a very cheap way to boost Poison candy and hit Fairy types.',
+    },
+    alternatives: [
+      {
+        sid: 'gengar_mega',
+        name: 'Mega Gengar',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy',
+        highlightMove: 'Sludge Bomb',
+        roleNote: 'Supreme Poison/Ghost DPS alternative.',
+      },
+      {
+        sid: 'venusaur_mega',
+        name: 'Mega Venusaur',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy',
+        highlightMove: 'Sludge Bomb',
+        roleNote: 'Bulky dual Grass/Poison candy booster.',
+      },
+    ],
+  },
+  psychic: {
+    type: 'psychic',
+    icon: '🧠',
+    displayName: 'Psychic',
+    expensive: {
+      sid: 'mewtwo_mega_y',
+      name: 'Mega Mewtwo Y',
+      energy: 400,
+      costTier: 'expensive',
+      costLabel: '400 Energy · Future Sight+',
+      highlightMove: 'Psystrike / Future Sight+',
+      roleNote: 'It is the strongest Pokémon in the game with Future Sight+, boasting unmatched Psychic DPS.',
+    },
+    cheap: {
+      sid: 'alakazam_mega',
+      name: 'Mega Alakazam',
+      energy: 200,
+      costTier: 'cheap',
+      costLabel: '200 Energy',
+      highlightMove: 'Psychic',
+      roleNote: 'A more traditional, lower-cost Psychic option at 200 energy.',
+    },
+    alternatives: [
+      {
+        sid: 'gardevoir_mega',
+        name: 'Mega Gardevoir',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy',
+        highlightMove: 'Psychic',
+        roleNote: 'Dual Psychic/Fairy booster.',
+      },
+      {
+        sid: 'latios_mega',
+        name: 'Mega Latios',
+        energy: 300,
+        costTier: 'expensive',
+        costLabel: '300 Energy',
+        highlightMove: 'Luster Purge',
+        roleNote: 'Dual Dragon/Psychic raid attacker.',
+      },
+    ],
+  },
+  rock: {
+    type: 'rock',
+    icon: '🪨',
+    displayName: 'Rock',
+    expensive: {
+      sid: 'tyranitar_mega',
+      name: 'Mega Tyranitar',
+      energy: 300,
+      costTier: 'expensive',
+      costLabel: '300 Energy · Smack Down',
+      highlightMove: 'Smack Down / Stone Edge',
+      roleNote: 'A bulky and powerful Rock/Dark attacker, though it requires 300 energy and a legacy fast move for optimal Rock performance.',
+    },
+    cheap: {
+      sid: 'aerodactyl_mega',
+      name: 'Mega Aerodactyl',
+      energy: 200,
+      costTier: 'cheap',
+      costLabel: '200 Energy',
+      highlightMove: 'Rock Slide',
+      roleNote: 'A 200-energy accessible option for Rock-type damage and Flying-type boost.',
+    },
+    alternatives: [
+      {
+        sid: 'diancie_mega',
+        name: 'Mega Diancie',
+        energy: 300,
+        costTier: 'expensive',
+        costLabel: '300 Energy',
+        highlightMove: 'Rock Slide',
+        roleNote: 'World-record highest pure Rock DPS in the game.',
+      },
+    ],
+  },
+  steel: {
+    type: 'steel',
+    icon: '⚙️',
+    displayName: 'Steel',
+    expensive: {
+      sid: 'lucario_mega',
+      name: 'Mega Lucario',
+      energy: 200,
+      costTier: 'expensive',
+      costLabel: '200 Energy · Meteor Mash',
+      highlightMove: 'Meteor Mash',
+      roleNote: 'The top Steel attacker with Meteor Mash, offering incredible damage and rapid energy pacing.',
+    },
+    cheap: {
+      sid: 'steelix_mega',
+      name: 'Mega Steelix',
+      energy: 200,
+      costTier: 'cheap',
+      costLabel: '200 Energy',
+      highlightMove: 'Heavy Slam',
+      roleNote: 'While offensively modest, it is a bulky, accessible (200 energy) support Mega for Steel candy boosts.',
+    },
+    alternatives: [
+      {
+        sid: 'metagross_mega',
+        name: 'Mega Metagross',
+        energy: 200,
+        costTier: 'expensive',
+        costLabel: '200 Energy · Meteor Mash',
+        highlightMove: 'Meteor Mash',
+        roleNote: 'Legendary bulk and top-tier Steel offensive firepower.',
+      },
+      {
+        sid: 'scizor_mega',
+        name: 'Mega Scizor',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy',
+        highlightMove: 'Iron Head',
+        roleNote: 'Dual Bug/Steel accessible option.',
+      },
+    ],
+  },
+  water: {
+    type: 'water',
+    icon: '💧',
+    displayName: 'Water',
+    expensive: {
+      sid: 'greninja_mega',
+      name: 'Mega Greninja (or Primal Kyogre)',
+      energy: 300,
+      costTier: 'expensive',
+      costLabel: '300–400 Energy · Hydro Cannon',
+      highlightMove: 'Hydro Cannon / Origin Pulse',
+      roleNote: 'Greninja is a top Water attacker, though Primal Kyogre is technically the best overall if you count Primals.',
+    },
+    cheap: {
+      sid: 'blastoise_mega',
+      name: 'Mega Blastoise',
+      energy: 200,
+      costTier: 'cheap',
+      costLabel: '200 Energy · Hydro Cannon',
+      highlightMove: 'Hydro Cannon',
+      roleNote: 'A classic and reliable 200-energy Water-type booster with Hydro Cannon.',
+    },
+    alternatives: [
+      {
+        sid: 'kyogre_primal',
+        name: 'Primal Kyogre',
+        energy: 400,
+        costTier: 'expensive',
+        costLabel: '400 Primal Energy',
+        isPrimal: true,
+        highlightMove: 'Origin Pulse',
+        roleNote: 'S-tier permanent Rainy weather boost and undisputed #1 Water/Electric/Bug candy booster.',
+      },
+      {
+        sid: 'starmie_mega',
+        name: 'Mega Starmie',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy · A+ Tier',
+        highlightMove: 'Waterfall / Hydro Pump',
+        roleNote: 'A+ tier Water/Psychic glass-cannon raid attacker.',
+      },
+      {
+        sid: 'swampert_mega',
+        name: 'Mega Swampert',
+        energy: 200,
+        costTier: 'cheap',
+        costLabel: '200 Energy',
+        highlightMove: 'Hydro Cannon',
+        roleNote: 'A-tier Water/Ground dual attacker with rapid Hydro Cannon spam.',
       },
     ],
   },
@@ -587,8 +878,8 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
       name: 'Mega Pidgeot',
       energy: 100,
       costTier: 'cheap',
-      costLabel: '100 Energy (Cheapest Flying)',
-      highlightMove: 'Gust / Brave Bird',
+      costLabel: '100 Energy (Cheapest)',
+      highlightMove: 'Brave Bird',
       roleNote: 'Costs only 100 energy and provides Flying-type & Normal-type candy boosting.',
     },
     alternatives: [
@@ -607,430 +898,8 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
         energy: 200,
         costTier: 'cheap',
         costLabel: '200 Energy',
-        highlightMove: 'Rock Throw / Ancient Power',
+        highlightMove: 'Ancient Power / Rock Slide',
         roleNote: 'Dual Rock/Flying accessible booster.',
-      },
-      {
-        sid: 'salamence_mega',
-        name: 'Mega Salamence',
-        energy: 300,
-        costTier: 'cheap',
-        costLabel: '300 Energy',
-        highlightMove: 'Fly',
-        roleNote: 'High Flying DPS alternative.',
-      },
-    ],
-  },
-  ghost: {
-    type: 'ghost',
-    icon: '👻',
-    displayName: 'Ghost',
-    expensive: {
-      sid: 'gengar_mega',
-      name: 'Mega Gengar',
-      energy: 200,
-      costTier: 'expensive',
-      costLabel: '200 Energy · Supreme Ghost DPS',
-      highlightMove: 'Shadow Claw / Shadow Ball',
-      roleNote: 'Tremendous damage output making it one of the absolute best Ghost attackers available.',
-    },
-    cheap: {
-      sid: 'banette_mega',
-      name: 'Mega Banette',
-      energy: 100,
-      costTier: 'cheap',
-      costLabel: '100 Energy (Budget)',
-      highlightMove: 'Shadow Claw / Shadow Ball',
-      roleNote: 'A-tier 100-energy Ghost budget booster.',
-    },
-    alternatives: [
-      {
-        sid: 'sableye_mega',
-        name: 'Mega Sableye',
-        energy: 100,
-        costTier: 'cheap',
-        costLabel: '100 Energy',
-        highlightMove: 'Shadow Sneak',
-        roleNote: 'Dual Ghost/Dark candy booster.',
-      },
-    ],
-  },
-  grass: {
-    type: 'grass',
-    icon: '🌿',
-    displayName: 'Grass',
-    expensive: {
-      sid: 'sceptile_mega',
-      name: 'Mega Sceptile',
-      energy: 200,
-      costTier: 'expensive',
-      costLabel: '200 Energy · Blistering DPS',
-      highlightMove: 'Bullet Seed / Frenzy Plant',
-      roleNote: '#1 Grass raid attacker with unmatched Frenzy Plant cycle speed.',
-    },
-    cheap: {
-      sid: 'venusaur_mega',
-      name: 'Mega Venusaur',
-      energy: 200,
-      costTier: 'cheap',
-      costLabel: '200 Energy · Bulky',
-      highlightMove: 'Vine Whip / Frenzy Plant',
-      roleNote: 'A-tier classic for Grass & Poison boosting with exceptional defensive bulk.',
-    },
-    alternatives: [
-      {
-        sid: 'abomasnow_mega',
-        name: 'Mega Abomasnow',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Razor Leaf / Energy Ball',
-        roleNote: 'Dual Grass/Ice raid attacker and candy booster.',
-      },
-    ],
-  },
-  ground: {
-    type: 'ground',
-    icon: '🟤',
-    displayName: 'Ground',
-    expensive: {
-      sid: 'groudon_primal',
-      name: 'Primal Groudon',
-      energy: 400,
-      costTier: 'expensive',
-      costLabel: '400 Primal Energy',
-      isPrimal: true,
-      highlightMove: 'Mud Shot / Precipice Blades',
-      roleNote: 'Undisputed #1 Ground titan with permanent Sunny weather boost.',
-    },
-    cheap: {
-      sid: 'swampert_mega',
-      name: 'Mega Swampert',
-      energy: 200,
-      costTier: 'cheap',
-      costLabel: '200 Energy',
-      highlightMove: 'Mud Shot / Earthquake',
-      roleNote: 'Excellent Water/Ground dual raid coverage at an accessible 200 energy cost.',
-    },
-    alternatives: [
-      {
-        sid: 'garchomp_mega',
-        name: 'Mega Garchomp',
-        energy: 300,
-        costTier: 'expensive',
-        costLabel: '300 Energy',
-        highlightMove: 'Mud Shot / Earth Power',
-        roleNote: 'Massive bulk and top-tier Ground offensive firepower.',
-      },
-      {
-        sid: 'steelix_mega',
-        name: 'Mega Steelix',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Earthquake',
-        roleNote: 'Defensive Ground/Steel booster.',
-      },
-    ],
-  },
-  ice: {
-    type: 'ice',
-    icon: '🧊',
-    displayName: 'Ice',
-    expensive: {
-      sid: 'abomasnow_mega',
-      name: 'Mega Abomasnow',
-      energy: 200,
-      costTier: 'expensive',
-      costLabel: '200 Energy · Weather Ball',
-      highlightMove: 'Powder Snow / Weather Ball Ice',
-      roleNote: 'Dedicated Ice attacker with rapid Weather Ball pacing and dual Grass boost.',
-    },
-    cheap: {
-      sid: 'glalie_mega',
-      name: 'Mega Glalie',
-      energy: 200,
-      costTier: 'cheap',
-      costLabel: '200 Energy · Avalanche',
-      highlightMove: 'Frost Breath / Avalanche',
-      roleNote: 'Accessible pure Ice Mega providing strong Ice candy and damage boosting.',
-    },
-    alternatives: [],
-  },
-  normal: {
-    type: 'normal',
-    icon: '⚪',
-    displayName: 'Normal',
-    expensive: {
-      sid: 'kangaskhan_mega',
-      name: 'Mega Kangaskhan',
-      energy: 200,
-      costTier: 'expensive',
-      costLabel: '200 Energy',
-      highlightMove: 'Mud-Slap / Outrage',
-      roleNote: 'Accessible Normal-type candy booster.',
-    },
-    cheap: {
-      sid: 'pidgeot_mega',
-      name: 'Mega Pidgeot',
-      energy: 100,
-      costTier: 'cheap',
-      costLabel: '100 Energy (Cheapest)',
-      highlightMove: 'Gust / Brave Bird',
-      roleNote: 'Costs only 100 energy and provides Flying-type & Normal-type candy boosting.',
-    },
-    alternatives: [
-      {
-        sid: 'lopunny_mega',
-        name: 'Mega Lopunny',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Pound / Hyper Beam',
-        roleNote: 'Normal/Fighting dual candy booster.',
-      },
-      {
-        sid: 'audino_mega',
-        name: 'Mega Audino',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Dazzling Gleam',
-        roleNote: 'Normal/Fairy dual candy booster.',
-      },
-    ],
-  },
-  poison: {
-    type: 'poison',
-    icon: '☠️',
-    displayName: 'Poison',
-    expensive: {
-      sid: 'gengar_mega',
-      name: 'Mega Gengar',
-      energy: 200,
-      costTier: 'expensive',
-      costLabel: '200 Energy · Sludge Bomb',
-      highlightMove: 'Hex / Sludge Bomb',
-      roleNote: '#1 Poison raid attacker in the game, shredding Fairy & Grass bosses.',
-    },
-    cheap: {
-      sid: 'beedrill_mega',
-      name: 'Mega Beedrill',
-      energy: 100,
-      costTier: 'cheap',
-      costLabel: '100 Energy (Cheapest)',
-      highlightMove: 'Poison Jab / Sludge Bomb',
-      roleNote: 'At 100 energy, a very cheap way to boost Poison candy and hit Fairy types.',
-    },
-    alternatives: [
-      {
-        sid: 'venusaur_mega',
-        name: 'Mega Venusaur',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Sludge Bomb',
-        roleNote: 'Bulky dual Grass/Poison candy booster.',
-      },
-    ],
-  },
-  psychic: {
-    type: 'psychic',
-    icon: '🧠',
-    displayName: 'Psychic',
-    expensive: {
-      sid: 'latios_mega',
-      name: 'Mega Latios',
-      energy: 300,
-      costTier: 'expensive',
-      costLabel: '300 Energy · Luster Purge',
-      highlightMove: 'Zen Headbutt / Psychic (or Luster Purge)',
-      roleNote: 'Heavy hitting Dragon/Psychic raid attacker.',
-    },
-    cheap: {
-      sid: 'alakazam_mega',
-      name: 'Mega Alakazam',
-      energy: 200,
-      costTier: 'cheap',
-      costLabel: '200 Energy',
-      highlightMove: 'Confusion / Psychic',
-      roleNote: 'Traditional, high-DPS Psychic option at 200 energy.',
-    },
-    alternatives: [
-      {
-        sid: 'gardevoir_mega',
-        name: 'Mega Gardevoir',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Confusion / Psychic',
-        roleNote: 'Dual Psychic/Fairy booster.',
-      },
-      {
-        sid: 'slowbro_mega',
-        name: 'Mega Slowbro',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Psychic',
-        roleNote: 'Water/Psychic defensive booster.',
-      },
-      {
-        sid: 'latias_mega',
-        name: 'Mega Latias',
-        energy: 300,
-        costTier: 'expensive',
-        costLabel: '300 Energy',
-        highlightMove: 'Mist Ball',
-        roleNote: 'Bulky Dragon/Psychic booster.',
-      },
-    ],
-  },
-  rock: {
-    type: 'rock',
-    icon: '🪨',
-    displayName: 'Rock',
-    expensive: {
-      sid: 'tyranitar_mega',
-      name: 'Mega Tyranitar',
-      energy: 300,
-      costTier: 'expensive',
-      costLabel: '300 Energy · Smack Down',
-      highlightMove: 'Smack Down / Stone Edge',
-      roleNote: 'Top-tier Rock attacker with tremendous bulk and offensive output.',
-    },
-    cheap: {
-      sid: 'aerodactyl_mega',
-      name: 'Mega Aerodactyl',
-      energy: 200,
-      costTier: 'cheap',
-      costLabel: '200 Energy',
-      highlightMove: 'Rock Throw / Rock Slide',
-      roleNote: 'A 200-energy accessible option for Rock-type damage and Flying-type boost.',
-    },
-    alternatives: [
-      {
-        sid: 'diancie_mega',
-        name: 'Mega Diancie',
-        energy: 300,
-        costTier: 'expensive',
-        costLabel: '300 Energy',
-        highlightMove: 'Rock Throw / Rock Slide',
-        roleNote: 'Highest pure Rock DPS in the game.',
-      },
-      {
-        sid: 'aggron_mega',
-        name: 'Mega Aggron',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Smack Down / Meteor Beam',
-        roleNote: 'Bulky alternative booster.',
-      },
-    ],
-  },
-  steel: {
-    type: 'steel',
-    icon: '⚙️',
-    displayName: 'Steel',
-    expensive: {
-      sid: 'metagross_mega',
-      name: 'Mega Metagross',
-      energy: 200,
-      costTier: 'expensive',
-      costLabel: '200 Energy · Meteor Mash',
-      highlightMove: 'Bullet Punch / Meteor Mash',
-      roleNote: 'Supreme Steel attacker with massive attack and bulk.',
-    },
-    cheap: {
-      sid: 'scizor_mega',
-      name: 'Mega Scizor',
-      energy: 200,
-      costTier: 'cheap',
-      costLabel: '200 Energy',
-      highlightMove: 'Bullet Punch / Iron Head',
-      roleNote: 'Dual Bug/Steel accessible option for Steel boosting.',
-    },
-    alternatives: [
-      {
-        sid: 'lucario_mega',
-        name: 'Mega Lucario',
-        energy: 200,
-        costTier: 'expensive',
-        costLabel: '200 Energy · Flash Cannon',
-        highlightMove: 'Flash Cannon',
-        roleNote: 'Steel/Fighting attacker.',
-      },
-      {
-        sid: 'steelix_mega',
-        name: 'Mega Steelix',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Heavy Slam',
-        roleNote: 'Steel/Ground tanky support.',
-      },
-      {
-        sid: 'aggron_mega',
-        name: 'Mega Aggron',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Heavy Slam',
-        roleNote: 'Pure Steel mega tank.',
-      },
-    ],
-  },
-  water: {
-    type: 'water',
-    icon: '💧',
-    displayName: 'Water',
-    expensive: {
-      sid: 'kyogre_primal',
-      name: 'Primal Kyogre',
-      energy: 400,
-      costTier: 'expensive',
-      costLabel: '400 Primal Energy',
-      isPrimal: true,
-      highlightMove: 'Waterfall / Origin Pulse',
-      roleNote: 'Undisputed #1 Water titan with permanent Rainy weather boost.',
-    },
-    cheap: {
-      sid: 'blastoise_mega',
-      name: 'Mega Blastoise',
-      energy: 200,
-      costTier: 'cheap',
-      costLabel: '200 Energy · Hydro Cannon',
-      highlightMove: 'Water Gun / Hydro Cannon',
-      roleNote: 'Classic and reliable 200-energy Water-type booster with Hydro Cannon.',
-    },
-    alternatives: [
-      {
-        sid: 'swampert_mega',
-        name: 'Mega Swampert',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Water Gun / Hydro Cannon',
-        roleNote: 'Top-tier Water/Ground dual attacker with rapid Hydro Cannon spam.',
-      },
-      {
-        sid: 'gyarados_mega',
-        name: 'Mega Gyarados',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Waterfall / Hydro Pump',
-        roleNote: 'Bulky Water/Dark booster.',
-      },
-      {
-        sid: 'slowbro_mega',
-        name: 'Mega Slowbro',
-        energy: 200,
-        costTier: 'cheap',
-        costLabel: '200 Energy',
-        highlightMove: 'Water Gun / Water Pulse',
-        roleNote: 'Water/Psychic support option.',
       },
     ],
   },
@@ -1040,14 +909,9 @@ export const CURATED_MEGA_ROSTER: Record<string, CuratedMegaTypeEntry> = {
  * Set of all curated Mega/Primal species identifiers and their base species.
  */
 export const CURATED_MEGA_SIDS: Set<string> = new Set<string>();
-export const CURATED_MEGA_BASE_SIDS: Set<string> = new Set<string>();
 
 const addCuratedSid = (sid: string) => {
-  const s = sid.toLowerCase();
-  if (!GAME_MASTER_MEGA_SIDS.has(s)) return;
-  CURATED_MEGA_SIDS.add(s);
-  const base = s.replace(/_mega.*|_primal/, '');
-  if (base) CURATED_MEGA_BASE_SIDS.add(base);
+  CURATED_MEGA_SIDS.add(sid.toLowerCase());
 };
 
 for (const entry of Object.values(CURATED_MEGA_ROSTER)) {
@@ -1065,7 +929,7 @@ for (const entry of Object.values(CURATED_MEGA_ROSTER)) {
   }
 }
 
-// Automatically curate canonical Pokébase S-tier and A+-tier Megas/Primals
+// Automatically curate all Pokébase S-tier and A+-tier Megas/Primals
 for (const [sid, tier] of Object.entries(POKEBASE_MEGA_TIERS)) {
   if (tier === 'S' || tier === 'A+') {
     addCuratedSid(sid);
@@ -1073,18 +937,36 @@ for (const [sid, tier] of Object.entries(POKEBASE_MEGA_TIERS)) {
 }
 
 /**
- * Checks whether a given species ID or Mega SID is in the curated meta roster.
+ * Is this exact Mega form in the curated roster AND a form that really exists?
+ *
+ * Only an exact Mega / Primal id matches. A base species name (for example 'houndoom') never matches, so a hypothetical
+ * Mega entry can no longer whitelist an ordinary Pokémon. When `supported` is given, a form missing from it is rejected.
  */
-export function isCuratedMega(sidOrMegaSid: string): boolean {
-  if (!sidOrMegaSid) return false;
-  const s = sidOrMegaSid.toLowerCase();
-  if (CURATED_MEGA_SIDS.has(s)) return true;
-  if (CURATED_MEGA_BASE_SIDS.has(s)) return true;
-  return false;
+export function isCuratedMega(megaSid: string, supported?: ReadonlySet<string>): boolean {
+  if (!megaSid) return false;
+  const s = megaSid.toLowerCase();
+  if (supported && !supported.has(s)) return false;
+  const tier = getPokebaseMegaTier(s);
+  return tier === 'S' || tier === 'A+' || CURATED_MEGA_SIDS.has(s);
+}
+
+/** Is this Pokémon in the family of this exact Mega form (the base Pokémon or one of its pre-evolutions)? */
+function monMatchesMegaSid(m: MonModel, optSid: string, dex: Dex): boolean {
+  const spId = m.species?.speciesId || '';
+  return spId === megaBaseSid(optSid) || dex.familyMegaInfo(spId).includes(optSid);
+}
+
+/** A form is real only if the Dex knows it (released in PvPoke and, when available, listed in the game master). */
+function isSupportedMega(dex: Dex, megaSid: string): boolean {
+  return dex.megaSpecies.has(megaSid.toLowerCase());
 }
 
 /**
  * Resolves the active curated Mega SIDs for this specific user box.
+ * Starts from the core curated picks (Expensive, Cheap, Pokébase S & A+ tiers),
+ * and whenever a user owns ZERO eligible specimens for a type's primary Expensive
+ * or Cheap pick (e.g. no Snorunt/Glalie for Ice), promotes the highest Pokébase-tier
+ * alternative they actually own (e.g. Mega Abomasnow [A-Tier]).
  */
 export function resolveActiveCuratedMegaSids(
   mons: MonModel[],
@@ -1092,13 +974,15 @@ export function resolveActiveCuratedMegaSids(
   minIv: number,
   minAtk: number,
 ): Set<string> {
-  const active = new Set<string>(CURATED_MEGA_SIDS);
+  // Only forms that really exist can ever be active.
+  const active = new Set<string>(Array.from(CURATED_MEGA_SIDS).filter((sid) => isSupportedMega(dex, sid)));
 
   const hasEligibleOwned = (optSid: string): boolean =>
     mons.some((m) => {
       if (!monMatchesMegaSid(m, optSid, dex)) return false;
-      if (m.has_mega_unlocked) return true;
-      return !m.is_shadow && m.iv_pct >= minIv && m.a >= minAtk;
+      const st = assessMegaForm(m, optSid, dex, { minIvPct: minIv, minAtkIv: minAtk, ignoreVerdict: true });
+      if (st.blockedByVerdict || m.is_shadow) return false;
+      return st.status !== 'NO_SPECIMEN' && st.status !== 'BASE_OWNED';
     });
 
   for (const entry of Object.values(CURATED_MEGA_ROSTER)) {
@@ -1110,7 +994,7 @@ export function resolveActiveCuratedMegaSids(
           megaTierScore(getPokebaseMegaTier(b.sid)) -
             megaTierScore(getPokebaseMegaTier(a.sid)) || a.energy - b.energy,
       );
-      const bestOwnedAlt = sortedAlts.find((alt) => hasEligibleOwned(alt.sid));
+      const bestOwnedAlt = sortedAlts.find((alt) => isSupportedMega(dex, alt.sid) && hasEligibleOwned(alt.sid));
       if (bestOwnedAlt) {
         active.add(bestOwnedAlt.sid.toLowerCase());
       }
@@ -1126,10 +1010,11 @@ export function resolveActiveCuratedMegaSids(
 export function getCuratedMegaInfo(
   megaSid: string,
   atype?: string,
+  supported?: ReadonlySet<string>,
 ): CuratedMegaOption | null {
   if (!megaSid) return null;
+  if (supported && !supported.has(megaSid.toLowerCase())) return null;
   const ms = megaSid.toLowerCase();
-  if (!GAME_MASTER_MEGA_SIDS.has(ms)) return null;
   const tier = getPokebaseMegaTier(ms);
 
   // If type is provided, check that type first
@@ -1151,7 +1036,8 @@ export function getCuratedMegaInfo(
     }
   }
 
-  if (tier) {
+  // Synthesize entry for Pokébase S / A+ Megas not explicitly listed in CURATED_MEGA_ROSTER
+  if (tier === 'S' || tier === 'A+') {
     const prettyName = ms
       .replace(/_mega_([xyz])$/, ' Mega $1')
       .replace(/_mega$/, '')
@@ -1163,7 +1049,7 @@ export function getCuratedMegaInfo(
     return {
       sid: ms,
       name: prettyName.includes('Mega') ? prettyName : `${prefix}${prettyName}`,
-      energy: (MEGA_ENERGY_COSTS[ms] || [200, 40])[0],
+      energy: ms.endsWith('_primal') ? 400 : 200,
       costTier: tier === 'S' ? 'expensive' : 'cheap',
       costLabel: `Pokébase ${tier} Tier`,
       roleNote: `Ranked ${tier} Tier on the Pokébase Mega Tier List for top-end raid damage and candy boosting.`,
@@ -1175,23 +1061,6 @@ export function getCuratedMegaInfo(
   return null;
 }
 
-export function monMatchesMegaSid(m: MonModel, optSid: string, dex: Dex): boolean {
-  const cleanOpt = optSid.toLowerCase();
-  // Ensure optSid is a genuine Game Master Mega form
-  if (!GAME_MASTER_MEGA_SIDS.has(cleanOpt)) return false;
-
-  const baseSid = cleanOpt.replace(/_mega.*|_primal/, '');
-  const spId = m.species?.speciesId || '';
-  const mSid = m.mega_sid || '';
-
-  // Direct match on mega_sid or final base species
-  if (mSid === cleanOpt || spId === baseSid || spId === cleanOpt) return true;
-
-  // Family descendant/evolution match: only if optSid is in family's mega info
-  const famMegas = dex.familyMegaInfo(spId);
-  return famMegas.includes(cleanOpt);
-}
-
 /**
  * Resolves ownership and builds status for the curated roster across user's inventory.
  */
@@ -1199,64 +1068,40 @@ export function buildCuratedMegaStatus(mons: MonModel[], dex: Dex): CuratedMegaT
   const rows: CuratedMegaTypeRow[] = [];
 
   const resolveOptionStatus = (opt: CuratedMegaOption): CuratedMegaOptionStatus => {
-    const cleanOptSid = opt.sid.toLowerCase();
-    const baseSid = cleanOptSid.replace(/_mega.*|_primal/, '');
-    const pokebaseTier = opt.pokebaseTier ?? getPokebaseMegaTier(cleanOptSid);
-    const matches: MonModel[] = [];
-
-    for (const m of mons) {
-      if (m.is_shadow) continue;
-      // Do not count specimens queued for TRANSFER, TRADE, or in REVIEW as retained Mega ownership
-      if (m.verdict === 'TRANSFER' || m.verdict === 'TRADE' || m.verdict === 'REVIEW') continue;
-
-      if (monMatchesMegaSid(m, cleanOptSid, dex)) {
-        matches.push(m);
-      }
-    }
-
-    if (matches.length === 0) {
-      return {
-        ...opt,
-        pokebaseTier,
-        owned: false,
-        unlocked: false,
-        specimen_status: 'no_specimen',
-        bestSpecimen: null,
-      };
-    }
-
-    // Sort: unlocked first, then active mega, then mega_level, then iv_pct, then level, then cp
-    matches.sort((a, b) => {
-      const aUn = a.has_mega_unlocked ? 1 : 0;
-      const bUn = b.has_mega_unlocked ? 1 : 0;
-      const aAct = a.is_currently_mega ? 1 : 0;
-      const bAct = b.is_currently_mega ? 1 : 0;
-      return (
-        bUn - aUn ||
-        bAct - aAct ||
-        b.mega_level - a.mega_level ||
-        b.iv_pct - a.iv_pct ||
-        b.level - a.level ||
-        b.cp - a.cp
-      );
+    const pokebaseTier = opt.pokebaseTier ?? getPokebaseMegaTier(opt.sid);
+    const none = (status: MegaStatus, supported: boolean): CuratedMegaOptionStatus => ({
+      ...opt,
+      pokebaseTier,
+      owned: false,
+      unlocked: false,
+      status,
+      supported,
+      bestSpecimen: null,
     });
 
-    const best = matches[0];
-    const isFinalStage = best.species?.speciesId === baseSid || best.has_mega_unlocked;
-    const isPreEvo = !isFinalStage;
+    // A form that does not exist in the game data can never be owned, unlocked or recommended.
+    if (!isSupportedMega(dex, opt.sid)) return none('NO_SPECIMEN', false);
 
-    let specimenStatus: MegaSpecimenStatus;
-    if (best.is_currently_mega) {
-      specimenStatus = 'mega_active';
-    } else if (best.has_mega_unlocked) {
-      specimenStatus = 'mega_unlocked';
-    } else if (isPreEvo) {
-      specimenStatus = 'needs_evolution';
-    } else if (best.iv_pct >= 80) {
-      specimenStatus = 'needs_first_mega';
-    } else {
-      specimenStatus = 'suitable_base';
+    const ranked: { m: MonModel; st: ReturnType<typeof assessMegaForm> }[] = [];
+    for (const m of mons) {
+      if (m.is_shadow || !monMatchesMegaSid(m, opt.sid, dex)) continue;
+      const st = assessMegaForm(m, opt.sid, dex);
+      // A Pokémon marked TRANSFER / TRADE / REVIEW is not retained Mega ownership.
+      if (st.blockedByVerdict) continue;
+      ranked.push({ m, st });
     }
+    if (ranked.length === 0) return none('NO_SPECIMEN', true);
+
+    // Best first: a really unlocked specimen, then the closest to unlocking, then Mega level, IVs and CP.
+    ranked.sort(
+      (a, b) =>
+        MEGA_INVEST_ORDER[a.st.status] - MEGA_INVEST_ORDER[b.st.status] ||
+        b.m.mega_level - a.m.mega_level ||
+        b.m.iv_pct - a.m.iv_pct ||
+        b.m.cp - a.m.cp,
+    );
+    const { m: best, st } = ranked[0];
+    const unlocked = SLOT_STATUSES.has(st.status);
 
     const brief: CuratedMegaSpecimenBrief = {
       id: best.uid,
@@ -1264,20 +1109,20 @@ export function buildCuratedMegaStatus(mons: MonModel[], dex: Dex): CuratedMegaT
       cp: best.cp,
       iv: ivStr(best),
       iv_pct: best.iv_pct,
-      mega_level: Math.max(best.has_mega_unlocked ? 1 : 0, best.mega_level),
-      has_unlocked: best.has_mega_unlocked,
+      mega_level: unlocked ? Math.max(1, best.mega_level) : 0,
+      has_unlocked: unlocked,
       verdict: best.verdict,
-      is_pre_evo: isPreEvo,
+      is_pre_evo: st.status === 'NEEDS_EVOLVE',
       role: best.role,
-      specimen_status: specimenStatus,
     };
 
     return {
       ...opt,
       pokebaseTier,
       owned: true,
-      unlocked: best.has_mega_unlocked,
-      specimen_status: specimenStatus,
+      unlocked,
+      status: st.status,
+      supported: true,
       bestSpecimen: brief,
     };
   };
@@ -1293,6 +1138,7 @@ export function buildCuratedMegaStatus(mons: MonModel[], dex: Dex): CuratedMegaT
           a.energy - b.energy,
       );
 
+    // Mark highest Pokébase-tier owned alternative as active fallback when a primary option is missing
     if (!exp.owned || !cheap.owned) {
       const bestFallback = alts.find((a) => a.owned);
       if (bestFallback) {
@@ -1300,7 +1146,6 @@ export function buildCuratedMegaStatus(mons: MonModel[], dex: Dex): CuratedMegaT
       }
     }
 
-    // Only count as covered if an UNLOCKED Mega is owned (never an un-unlocked candidate)
     const covered = exp.unlocked || cheap.unlocked || alts.some((a) => a.unlocked);
 
     rows.push({

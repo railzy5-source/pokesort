@@ -65,7 +65,7 @@ export function analyzePgsExport(
   const dex = new Dex(remoteData, cfg, pveCtx, caps, cups);
 
   // Replace internal type rankings with Pokébattler when available (and requested).
-  const source = String((cfg.raid as any)?.ranking_source || 'pokebattler').toLowerCase();
+  const source = String(cfg.raid?.ranking_source || 'pokebattler').toLowerCase();
   if (source === 'pokebattler' && externalRaidRankings && externalRaidRankings.size > 0) {
     const n = applyExternalRaidRankings(dex, externalRaidRankings, true);
     onStage?.(
@@ -125,7 +125,7 @@ export function analyzePgsExport(
         m.is_mega_capable = true;
         // B:1 — Select X (form=2) vs Y (form=3) Mega form if recorded on this specimen;
         // otherwise prefer a curated primary Mega (e.g. raichu_mega_y, charizard_mega_y, mewtwo_mega_y).
-        let chosenMega = famMegas.find((id) => isCuratedMega(id)) || famMegas[0];
+        let chosenMega = famMegas.find((id) => isCuratedMega(id, dex.megaSpecies)) || famMegas[0];
         if (famMegas.length > 1) {
           const megaX = famMegas.find((id) => id.endsWith('_mega_x'));
           const megaY = famMegas.find((id) => id.endsWith('_mega_y'));
@@ -134,8 +134,8 @@ export function analyzePgsExport(
             const hasY = m.mega_forms.includes(3);
             if (hasY && !hasX && megaY) chosenMega = megaY;
             else if (hasX && !hasY && megaX) chosenMega = megaX;
-            else if (megaY && isCuratedMega(megaY)) chosenMega = megaY;
-          } else if (megaY && isCuratedMega(megaY)) {
+            else if (megaY && isCuratedMega(megaY, dex.megaSpecies)) chosenMega = megaY;
+          } else if (megaY && isCuratedMega(megaY, dex.megaSpecies)) {
             chosenMega = megaY;
           }
         }
@@ -273,7 +273,7 @@ export async function runFullAnalysis(
 
   // Pokébattler type rankings (optional; falls back to internal formula rankings)
   let pbRankings: TypeRankingMap | null = null;
-  const rankingSource = String((cfg.raid as any)?.ranking_source || 'pokebattler').toLowerCase();
+  const rankingSource = String(cfg.raid?.ranking_source || 'pokebattler').toLowerCase();
   if (rankingSource === 'pokebattler' && !options.useOfflineFallbackOnly) {
     try {
       options.onProgress?.({ stage: 'Loading Pokébattler raid rankings…', pct: 28 });
