@@ -950,21 +950,29 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
     });
   };
 
-  const hasReadinessFlags = lv.some((r) => r.can_build_now !== undefined);
+  // READY = proven affordable in queue order. CHECK = nothing known is short, but a balance or price is unknown.
+  // BLOCKED / NOT AFFORDABLE = a known resource is short (after earlier builds in the queue took theirs, or even without that).
+  const hasAllocation = lv.some((r) => r.affordability !== undefined);
+  const statusOf = (r: (typeof lv)[0]) => r.affordability?.status;
   const canBuildNow = sortPlanRows(
-    hasReadinessFlags
-      ? lv.filter((r) => r.can_build_now)
+    hasAllocation
+      ? lv.filter((r) => statusOf(r) === 'READY')
       : dustBudget
       ? lv.filter((r) => r.cost.dust <= dustBudget)
       : lv,
   );
+  const checkQueue = sortPlanRows(hasAllocation ? lv.filter((r) => statusOf(r) === 'CHECK') : []);
   const blockedQueue = sortPlanRows(
-    hasReadinessFlags
-      ? lv.filter((r) => !r.can_build_now)
+    hasAllocation
+      ? lv.filter((r) => statusOf(r) === 'BLOCKED' || statusOf(r) === 'NOT_AFFORDABLE')
       : dustBudget
       ? lv.filter((r) => r.cost.dust > dustBudget)
       : [],
   );
+  const nameOf = (id: string) => {
+    const hit = lv.find((x) => x.id === id);
+    return hit ? `${hit.species} (${hit.iv})` : id;
+  };
 
   const copySearch = async (s: string, label: string) => {
     const ok = await copyToClipboard(s);
@@ -1038,15 +1046,53 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
               </span>
             )
           )}
-          {r.blockers && r.blockers.length > 0 && (
-            <span className="font-medium text-rose-600 dark:text-rose-400">
-              Blocked: {r.blockers.join(' · ')}
-            </span>
-          )}
         </div>
+        {r.affordability && r.affordability.status !== 'READY' && (
+          <div className="mt-1 space-y-0.5 text-[11px] leading-snug">
+            {r.affordability.lines
+              .filter((l) => l.status !== 'ok')
+              .map((l) => (
+                <div
+                  key={l.key}
+                  className={l.status === 'short' ? 'text-rose-600 dark:text-rose-400' : 'text-amber-600 dark:text-amber-400'}
+                >
+                  {l.status === 'short' ? '✗ ' : '? '}
+                  {l.status === 'short'
+                    ? `Short on ${l.label}: need ${formatNum(l.need)}, have ${formatNum(l.have ?? 0)}${l.note ? ` (${l.note})` : ''}`
+                    : `Unknown: ${l.label}${l.need > 0 ? ` (needs ${formatNum(l.need)})` : ''}. ${l.note || 'Check in-game'}`}
+                </div>
+              ))}
+            {r.affordability.status === 'BLOCKED' && r.affordability.blocked_by.length > 0 && (
+              <div className="text-orange-600 dark:text-orange-400">
+                Waiting on higher-priority builds that use the same resources: {r.affordability.blocked_by.map(nameOf).join(', ')}
+              </div>
+            )}
+            {r.affordability.notes.map((n) => (
+              <div key={n} className="text-slate-500">{n}</div>
+            ))}
+          </div>
+        )}
+        {!r.affordability && r.blockers && r.blockers.length > 0 && (
+          <div className="mt-1 text-[11px] font-medium text-rose-600 dark:text-rose-400">Blocked: {r.blockers.join(' · ')}</div>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-3">
+        {r.affordability && (
+          <span
+            className={`rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+              r.affordability.status === 'READY'
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                : r.affordability.status === 'CHECK'
+                ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                : r.affordability.status === 'BLOCKED'
+                ? 'border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300'
+                : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+            }`}
+          >
+            {r.affordability.status === 'CHECK' ? 'Check in-game' : r.affordability.status === 'NOT_AFFORDABLE' ? 'Not affordable' : r.affordability.status}
+          </span>
+        )}
         <span className={`font-mono text-xs font-semibold tabular-nums ${priorityTone(r.impact)}`}>
           Priority {r.impact}/100
         </span>
@@ -1072,7 +1118,7 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
             Bag-Aware Build Plan &amp; Resource Queue
           </h1>
           <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
-            Ranked by meta role, PvP IV rank or Raid DPS, coverage gaps, and upgrade efficiency using your real bag resources.
+            Ranked by priority. Resources are handed out in this order, so a TM or Stardust used by a build higher up is no longer available to the ones below it.
           </p>
         </div>
 
@@ -1113,33 +1159,30 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
         </div>
       </div>
 
-      {/* Unified Bag Inventory Bar */}
+      {/* What the export says you hold: every balance is KNOWN or UNKNOWN, never silently 0 */}
+      {report.resource_ledger && (
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-slate-200/80 bg-slate-200/60 sm:grid-cols-3 lg:grid-cols-6 dark:border-slate-800/90 dark:bg-slate-800/60">
+          {report.resource_ledger.map((row) => (
+            <div key={row.key} className="bg-white p-3 dark:bg-[#0F1B28]">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{row.label}</div>
+              {row.state === 'known' ? (
+                <>
+                  <div className="mt-0.5 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">{formatNum(row.value ?? 0)}</div>
+                  {row.basis === 'not_listed' && <div className="text-[10px] text-slate-500">none held (not listed)</div>}
+                </>
+              ) : (
+                <>
+                  <div className="mt-0.5 font-mono text-base font-bold text-amber-600 dark:text-amber-400">Unknown</div>
+                  <div className="text-[10px] text-slate-500">{row.reason}</div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {bag && (
         <div className="grid grid-cols-2 divide-y divide-slate-200/80 rounded-xl border border-slate-200/80 bg-white sm:grid-cols-3 sm:divide-x sm:divide-y-0 lg:grid-cols-6 dark:divide-slate-800/90 dark:border-slate-800/90 dark:bg-[#0F1B28]">
-          <div className="p-3.5">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Stardust</div>
-            <div className="mt-0.5 font-mono text-base font-bold tabular-nums text-amber-600 dark:text-amber-400">
-              {formatNum(bag.stardust)}
-            </div>
-          </div>
-          <div className="p-3.5">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Rare Candy / XL</div>
-            <div className="mt-0.5 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
-              {formatNum(bag.rare_candy)} / {formatNum(bag.xl_candy)}
-            </div>
-          </div>
-          <div className="p-3.5">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Fast / Charged TMs</div>
-            <div className="mt-0.5 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
-              {bag.fast_tms} / {bag.charged_tms}
-            </div>
-          </div>
-          <div className="p-3.5">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Elite Fast / Chg</div>
-            <div className="mt-0.5 font-mono text-base font-bold tabular-nums text-rose-600 dark:text-rose-400">
-              {bag.elite_fast_tms} / {bag.elite_charged_tms}
-            </div>
-          </div>
           <div className="p-3.5">
             <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Evo Stones (Sin/Uno)</div>
             <div className="mt-0.5 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
@@ -1282,6 +1325,19 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
           )}
         </div>
       </div>
+
+      {checkQueue.length > 0 && (
+        <div className="rounded-xl border border-amber-500/30 bg-white p-5 dark:bg-[#0F1B28]">
+          <h2 className="text-sm font-bold text-amber-700 dark:text-amber-300">Check in-game before building ({checkQueue.length})</h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Everything your export lets us check is enough, but a balance or price it does not contain is needed (for example species
+            Candy). We never call these ready without proof.
+          </p>
+          <div className="mt-2 divide-y divide-slate-100 dark:divide-slate-800">
+            {checkQueue.slice(0, 15).map((r, i) => renderBuildRow(r, i))}
+          </div>
+        </div>
+      )}
 
       {blockedQueue.length > 0 && (
         <div className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]">

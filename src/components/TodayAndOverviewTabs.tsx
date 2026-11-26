@@ -96,7 +96,7 @@ export const TodayTab: React.FC<TodayTabProps> = ({ report, onJumpTab, onInspect
             Bag Inventory
           </div>
           <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
-            <span>Rare/XL <b className="font-mono text-slate-900 dark:text-slate-100">{ac.rare_candy}/{ac.xl_candy}</b></span>
+            <span>Rare/XL <b className="font-mono text-slate-900 dark:text-slate-100">{ac.rare_candy}/{ac.rare_candy_xl}</b></span>
             <span>Fast TM <b className="font-mono text-slate-900 dark:text-slate-100">{ac.fast_tms}</b></span>
             <span>Chg TM <b className="font-mono text-slate-900 dark:text-slate-100">{ac.charged_tms}</b></span>
             <span>Passes <b className="font-mono text-slate-900 dark:text-slate-100">{ac.premium_passes + ac.remote_passes}</b></span>

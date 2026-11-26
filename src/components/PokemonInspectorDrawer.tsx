@@ -517,8 +517,13 @@ export const PokemonInspectorDrawer: React.FC<PokemonInspectorDrawerProps> = ({
                 </div>
               )}
               {mon.build_blockers && mon.build_blockers.length > 0 && (
-                <div className="mt-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">
-                  Blocked: {mon.build_blockers.join(' · ')}
+                <div
+                  className={`mt-1.5 text-xs font-medium ${
+                    mon.build_affordability === 'CHECK' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'
+                  }`}
+                >
+                  {mon.build_affordability === 'CHECK' ? 'Check in-game: ' : mon.build_affordability === 'BLOCKED' ? 'Waiting: ' : 'Not affordable: '}
+                  {mon.build_blockers.join(' · ')}
                 </div>
               )}
             </div>
