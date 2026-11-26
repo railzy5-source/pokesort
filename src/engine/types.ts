@@ -421,6 +421,8 @@ export interface RemoteGameData {
   evolveCosts?: Record<string, { c: number; i: string | null }>;
   /** Mega / Primal forms that really exist in the game master (e.g. 'charizard_mega_x'). Missing = could not be verified. */
   megaForms?: string[];
+  /** The game's own second-charged-move price per species ('houndoom' -> Stardust + Candy). Missing = unknown. */
+  secondMoveCosts?: Record<string, { dust: number; candy: number }>;
   showcaseSizes: Record<string, SizeTableRecord>;
   sizeOk: boolean;
   events: ScrapedEvent[];
@@ -678,6 +680,8 @@ export interface ReportMon {
   purify_preview?: PurifyPreview | null;
   pvp_battle?: PvpBattleSummary | null;
   build_ready_now?: boolean;
+  /** READY / CHECK / BLOCKED / NOT_AFFORDABLE from the sequential allocation. */
+  build_affordability?: 'READY' | 'CHECK' | 'BLOCKED' | 'NOT_AFFORDABLE';
   build_blockers?: string[];
   build_status?: BuildStatus;
   needs_moves?: string[];
@@ -1116,6 +1120,8 @@ export interface GradeComponent {
   explain: string;
 }
 
+import type { AllocationResult, LedgerSummaryRow } from './resourceLedger';
+
 export interface LevelTheseItem {
   id: string;
   species: string;
@@ -1135,8 +1141,11 @@ export interface LevelTheseItem {
   needs_second_move?: boolean;
   why: string[];
   search: string;
+  /** true = proven affordable now; false = not; undefined = could not be confirmed (see `affordability`). */
   can_build_now?: boolean;
   blockers?: string[];
+  /** Sequential allocation result: READY / CHECK / BLOCKED / NOT_AFFORDABLE with every resource line. */
+  affordability?: AllocationResult;
 }
 
 export interface BriefingEventItem {
@@ -1265,7 +1274,7 @@ export interface BriefingData {
     cap: number;
     free: number | null;
     stardust: number;
-    xl_candy: number;
+    rare_candy_xl: number;
     rare_candy: number;
     premium_passes: number;
     remote_passes: number;
@@ -1297,7 +1306,7 @@ export interface BriefingData {
 export interface BagResources {
   stardust: number;
   rare_candy: number;
-  xl_candy: number;
+  rare_candy_xl: number;
   fast_tms: number;
   charged_tms: number;
   elite_fast_tms: number;
@@ -1656,6 +1665,8 @@ export interface ReportJson {
   tag_audit?: TagAuditData;
   mega_optimizer?: MegaOptimizerData;
   curated_megas?: CuratedMegaTypeRow[];
+  /** What the player holds, each balance KNOWN or UNKNOWN (never silently 0). */
+  resource_ledger?: LedgerSummaryRow[];
   buddy_planner?: BuddyPoffinPlannerData;
   items_audit?: ItemsAuditData;
   live_gyms?: LiveGymsData;

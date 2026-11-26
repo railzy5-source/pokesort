@@ -1,5 +1,7 @@
 import { buildRowCosts } from './costTables';
 import { maxWeightAssignment } from './assignment';
+import { costBundleFor, familyKeysFor } from './investmentCost';
+import { allocateQueue, buildLedger, summarizeLedger, type AllocationResult, type CostBundle, type Ledger } from './resourceLedger';
 import { assessMegaForm, isDisposedVerdict, megaBaseSid, MEGA_INVEST_ORDER, MEGA_STATUS_LABEL, type MegaStatus } from './megaStatus';
 import {
   BASE_CUPS,
@@ -50,7 +52,6 @@ import {
   buildSafeSearchChunks,
   buildTagAudit,
   buildTradeMatcher,
-  evaluateBuildReadiness,
   evaluateTagConflicts,
   extractBagResources,
   requiredEvolutionItem,
@@ -960,6 +961,21 @@ export function buildRaidTeams(
       },
     };
   });
+}
+
+/** Plain-language lines explaining why an investment is not READY. */
+function affordabilityBlockers(res: AllocationResult): string[] {
+  const out: string[] = [];
+  for (const l of res.lines) {
+    if (l.status === 'short') {
+      out.push(`Short on ${l.label}: need ${l.need.toLocaleString()}, have ${(l.have ?? 0).toLocaleString()}${l.note ? ` (${l.note})` : ''}`);
+    } else if (l.status === 'unknown') {
+      out.push(`Unknown: ${l.label}${l.need > 0 ? ` (needs ${l.need.toLocaleString()})` : ''}. ${l.note || 'check in-game'}`);
+    }
+  }
+  if (res.status === 'BLOCKED' && res.blocked_by.length > 0) out.push('Earlier investments in your queue use the resources this one needs');
+  for (const n of res.notes) if (!out.includes(n)) out.push(n);
+  return out;
 }
 
 function raidEntryFrom(
@@ -1885,6 +1901,7 @@ export function computeGradeAndDetails(
   bagResources?: BagResources,
   curatedMegas?: CuratedMegaTypeRow[],
   cfg?: PogoConfig,
+  ledger?: Ledger,
 ): ReportJson['grade'] {
   let raidWeightSum = 0;
   let raidWeighted = 0;
@@ -2196,6 +2213,8 @@ export function computeGradeAndDetails(
     (r.needs_elite_moves?.length || 0) > 0 ||
     Boolean(r.evolve_to);
 
+  const bundles = new Map<string, CostBundle>();
+  const families = new Map<string, string[]>();
   const allLevelThese: LevelTheseItem[] = reportMons
     .filter((r) => r.verdict.startsWith('BUILD_') && hasBuildAction(r))
     .map((r) => {
@@ -2287,12 +2306,9 @@ export function computeGradeAndDetails(
         why: [r.why, r.status_reason || ''].filter(Boolean),
         search: r.search,
       };
-      if (bagResources) {
-        const readyCheck = evaluateBuildReadiness(item, m, bagResources, r.needs_typed || []);
-        item.can_build_now = readyCheck.can_build_now;
-        item.blockers = readyCheck.blockers;
-        r.build_ready_now = readyCheck.can_build_now;
-        r.build_blockers = readyCheck.blockers;
+      if (ledger) {
+        bundles.set(item.id, costBundleFor(item, m, r, dex));
+        families.set(item.id, familyKeysFor(m, dex));
       }
       return item;
     });
@@ -2300,6 +2316,28 @@ export function computeGradeAndDetails(
   const sortedByImpact = allLevelThese.sort(
     (a, b) => b.impact - a.impact || a.cost.dust - b.cost.dust,
   );
+
+  // Allocate the ranked queue ONE AFTER ANOTHER: what an earlier investment uses is gone for the next one.
+  if (ledger) {
+    const results = allocateQueue(
+      sortedByImpact.map((it) => ({ id: it.id, cost: bundles.get(it.id)!, familyKeys: families.get(it.id) || [] })),
+      ledger,
+    );
+    const byId = new Map(reportMons.map((rm) => [rm.id, rm]));
+    sortedByImpact.forEach((it, i) => {
+      const res = results[i];
+      it.affordability = res;
+      // READY = proven; CHECK = nothing known is short but something is unknown (never claimed as ready)
+      it.can_build_now = res.status === 'READY' ? true : res.status === 'CHECK' ? undefined : false;
+      it.blockers = affordabilityBlockers(res);
+      const rm = byId.get(it.id);
+      if (rm) {
+        rm.build_ready_now = res.status === 'READY';
+        rm.build_blockers = it.blockers;
+        rm.build_affordability = res.status;
+      }
+    });
+  }
   const readySlice = sortedByImpact.filter((x) => x.can_build_now !== false).slice(0, 35);
   const blockedSlice = sortedByImpact.filter((x) => x.can_build_now === false).slice(0, 25);
   const levelThese: LevelTheseItem[] = [...readySlice, ...blockedSlice];
@@ -2843,7 +2881,7 @@ export function buildBriefing(
       cap,
       free: Math.max(0, cap - stored),
       stardust,
-      xl_candy: bag.xl_candy,
+      rare_candy_xl: bag.rare_candy_xl,
       rare_candy: bag.rare_candy,
       premium_passes: bag.premium_passes,
       remote_passes: bag.remote_passes,
@@ -3121,6 +3159,7 @@ export function buildFullReport(params: {
   const eeveeTracker = buildEeveeTracker(rawData, mons);
   const megaOptimizer = buildMegaOptimizer(mons, dex, exportRefMs);
   const curatedMegas = buildCuratedMegaStatus(mons, dex);
+  const resourceLedger = buildLedger(rawData);
   const buddyPlanner = buildBuddyPoffinPlan(rawData, mons, bagResources);
   const itemsAudit = buildItemsAndStorageAudit(rawData, mons, bagResources, exportRefMs);
   const liveGyms = buildLiveGymsData(rawData, mons, exportRefMs);
@@ -3367,6 +3406,7 @@ export function buildFullReport(params: {
     bagResources,
     curatedMegas,
     cfg,
+    resourceLedger,
   );
   const holding = buildHoldSummary(mons, auxMap);
   const briefing = buildBriefing(
@@ -3445,6 +3485,7 @@ export function buildFullReport(params: {
     tag_audit: tagAudit,
     mega_optimizer: megaOptimizer,
     curated_megas: curatedMegas,
+    resource_ledger: summarizeLedger(resourceLedger),
     buddy_planner: buddyPlanner,
     items_audit: itemsAudit,
     live_gyms: liveGyms,

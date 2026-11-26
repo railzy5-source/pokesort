@@ -1,4 +1,4 @@
-import { setLiveEvolveCosts } from './costTables';
+import { setLiveEvolveCosts, setLiveSecondMoveCosts } from './costTables';
 import { evaluatePvpBattleMatrix } from './battleSim';
 import { computeCp } from './cpmTable';
 import {
@@ -56,6 +56,7 @@ export function analyzePgsExport(
   const parsed = parsePgsExport(rawExport);
   // Real evolution costs from the game master (null = built-in table, shown as "estimated")
   setLiveEvolveCosts(remoteData.evolveCosts);
+  setLiveSecondMoveCosts(remoteData.secondMoveCosts);
   const cfg: PogoConfig = buildMergedConfig(userCfg);
   const { caps, cups } = getActiveLeaguesAndCups(cfg);
 

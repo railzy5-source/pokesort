@@ -103,7 +103,7 @@ export async function clearRemoteCache(): Promise<void> {
 
 export async function inspectCacheStatus(): Promise<CacheSummary> {
   const gm = await idbGet('pvpoke:gamemaster.json');
-  const pve = await idbGet('pokeminers:pve_and_sizes_v4');
+  const pve = await idbGet('pokeminers:pve_and_sizes_v5');
   const ev = await idbGet('scrapedduck:events');
   const ageDays = gm ? Number(((Date.now() - gm.ts) / 86400000).toFixed(1)) : null;
   return {
@@ -255,7 +255,23 @@ export function collectMegaForms(ps: Record<string, unknown>, out: Set<string>):
   }
 }
 
+
+/** Adds the species' own second-charged-move price (Stardust + Candy) straight from the game master. */
+export function collectSecondMoveCosts(
+  ps: Record<string, unknown>,
+  out: Record<string, { dust: number; candy: number }>,
+): void {
+  const tm = ps.thirdMove as Record<string, unknown> | undefined;
+  if (!tm || typeof tm !== 'object') return;
+  const dust = Number(tm.stardustToUnlock || 0);
+  const candy = Number(tm.candyToUnlock || 0);
+  if (!(dust > 0) || !(candy > 0)) return;
+  const sid = evoSid(ps.pokemonId, ps.form);
+  if (sid) out[sid] = { dust, candy };
+}
+
 function shrinkPokeMinersMaster(raw: unknown[]): {
+  secondMoveCosts: Record<string, { dust: number; candy: number }>;
   megaForms: string[];
   evolveCosts: Record<string, { c: number; i: string | null }>;
   pveMoves: Record<string, PveMoveRecord>;
@@ -267,6 +283,7 @@ function shrinkPokeMinersMaster(raw: unknown[]): {
   const avg = new Map<string, [number, number]>();
   const evolveCosts: Record<string, { c: number; i: string | null }> = {};
   const megaFormSet = new Set<string>();
+  const secondMoveCosts: Record<string, { dust: number; candy: number }> = {};
   const xxl = new Map<string, number>();
 
   for (const item of raw) {
@@ -330,6 +347,7 @@ function shrinkPokeMinersMaster(raw: unknown[]): {
     if (ps) {
       collectEvolutionCosts(ps, evolveCosts);
       collectMegaForms(ps, megaFormSet);
+      collectSecondMoveCosts(ps, secondMoveCosts);
     }
     if (ps && ps.pokedexHeightM !== undefined) {
       let key = String(ps.form || ps.pokemonId || '');
@@ -374,7 +392,7 @@ function shrinkPokeMinersMaster(raw: unknown[]): {
     };
   }
 
-  return { pveMoves, pvpBuffs, showcaseSizes, evolveCosts, megaForms: Array.from(megaFormSet) };
+  return { pveMoves, pvpBuffs, showcaseSizes, evolveCosts, megaForms: Array.from(megaFormSet), secondMoveCosts };
 }
 
 export async function loadRemoteGameData(opts: {
@@ -457,6 +475,7 @@ export async function loadRemoteGameData(opts: {
   let showcaseSizes = fallback.showcaseSizes;
   let evolveCosts: Record<string, { c: number; i: string | null }> | undefined;
   let megaForms: string[] | undefined;
+  let secondMoveCosts: Record<string, { dust: number; candy: number }> | undefined;
   let pveOk = false;
   let sizeOk = false;
 
@@ -466,7 +485,8 @@ export async function loadRemoteGameData(opts: {
     showcaseSizes: Record<string, SizeTableRecord>;
     evolveCosts?: Record<string, { c: number; i: string | null }>;
     megaForms?: string[];
-  }>('pokeminers:pve_and_sizes_v4');
+    secondMoveCosts?: Record<string, { dust: number; candy: number }>;
+  }>('pokeminers:pve_and_sizes_v5');
 
   const pveFresh = pveCache && Date.now() - pveCache.ts <= MAX_AGE_MS;
   if (!refresh && pveFresh && pveCache) {
@@ -475,6 +495,7 @@ export async function loadRemoteGameData(opts: {
     showcaseSizes = pveCache.data.showcaseSizes;
     evolveCosts = pveCache.data.evolveCosts;
     megaForms = pveCache.data.megaForms;
+    secondMoveCosts = pveCache.data.secondMoveCosts;
     pveOk = Object.keys(pveMoves).length > 50;
     sizeOk = Object.keys(showcaseSizes).length > 50;
   } else if (!offlineOnly) {
@@ -488,9 +509,10 @@ export async function loadRemoteGameData(opts: {
           showcaseSizes = shrunk.showcaseSizes;
           evolveCosts = shrunk.evolveCosts;
           megaForms = shrunk.megaForms;
+          secondMoveCosts = shrunk.secondMoveCosts;
           pveOk = true;
           sizeOk = Object.keys(showcaseSizes).length > 100;
-          await idbSet('pokeminers:pve_and_sizes_v4', shrunk);
+          await idbSet('pokeminers:pve_and_sizes_v5', shrunk);
         }
       }
     } catch {
@@ -575,6 +597,8 @@ export async function loadRemoteGameData(opts: {
     evolveCosts: evolveCosts && Object.keys(evolveCosts).length > 50 ? evolveCosts : undefined,
     // Only trusted when the game master clearly listed Mega forms (a short list means the data was incomplete).
     megaForms: megaForms && megaForms.length >= 20 ? megaForms : undefined,
+    // Only trusted when the game master clearly priced many species (a short list means the data was incomplete).
+    secondMoveCosts: secondMoveCosts && Object.keys(secondMoveCosts).length >= 100 ? secondMoveCosts : undefined,
     showcaseSizes,
     sizeOk,
     events,
