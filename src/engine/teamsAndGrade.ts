@@ -2307,8 +2307,13 @@ export function computeGradeAndDetails(
         search: r.search,
       };
       if (ledger) {
-        bundles.set(item.id, costBundleFor(item, m, r, dex));
-        families.set(item.id, familyKeysFor(m, dex));
+        const bundle = costBundleFor(item, m, r, dex);
+        const fams = familyKeysFor(m, dex);
+        bundles.set(item.id, bundle);
+        families.set(item.id, fams);
+        // Carried in the report so the browser can re-run the SAME allocation when you change the order
+        item.cost_bundle = bundle;
+        item.family_keys = fams;
       }
       return item;
     });
@@ -3486,6 +3491,7 @@ export function buildFullReport(params: {
     mega_optimizer: megaOptimizer,
     curated_megas: curatedMegas,
     resource_ledger: summarizeLedger(resourceLedger),
+    resource_ledger_data: resourceLedger,
     buddy_planner: buddyPlanner,
     items_audit: itemsAudit,
     live_gyms: liveGyms,

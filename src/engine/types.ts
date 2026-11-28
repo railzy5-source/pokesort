@@ -1120,7 +1120,7 @@ export interface GradeComponent {
   explain: string;
 }
 
-import type { AllocationResult, LedgerSummaryRow } from './resourceLedger';
+import type { AllocationResult, CostBundle, Ledger, LedgerSummaryRow } from './resourceLedger';
 
 export interface LevelTheseItem {
   id: string;
@@ -1146,6 +1146,10 @@ export interface LevelTheseItem {
   blockers?: string[];
   /** Sequential allocation result: READY / CHECK / BLOCKED / NOT_AFFORDABLE with every resource line. */
   affordability?: AllocationResult;
+  /** What this build costs, in a form the allocator can re-run when the queue order changes. */
+  cost_bundle?: CostBundle;
+  /** Keys of this Pokémon's family in per-family balances. */
+  family_keys?: string[];
 }
 
 export interface BriefingEventItem {
@@ -1667,6 +1671,8 @@ export interface ReportJson {
   curated_megas?: CuratedMegaTypeRow[];
   /** What the player holds, each balance KNOWN or UNKNOWN (never silently 0). */
   resource_ledger?: LedgerSummaryRow[];
+  /** The full ledger, so the browser can recalculate the investment queue. */
+  resource_ledger_data?: Ledger;
   buddy_planner?: BuddyPoffinPlannerData;
   items_audit?: ItemsAuditData;
   live_gyms?: LiveGymsData;
