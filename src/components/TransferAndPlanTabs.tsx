@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type { ReportJson } from '../engine/types';
 import { solveDustBudgetPlan } from '../engine/bossAndCompare';
+import { allocateQueue } from '../engine/resourceLedger';
 import { copyToClipboard, formatNum, type TabKey } from './uiTokens';
 
 type SortDir = 'asc' | 'desc';
@@ -923,6 +924,9 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
   const [showAllBlocked, setShowAllBlocked] = useState(false);
   const [planSort, setPlanSort] = useState<'impact' | 'dust' | 'cp' | 'level' | 'species'>('impact');
   const [planDir, setPlanDir] = useState<SortDir>('desc');
+  // Your own build order (null = the app's priority order) and whether Rare Candy may cover Candy shortages
+  const [queueOrder, setQueueOrder] = useState<string[] | null>(null);
+  const [allowRare, setAllowRare] = useState(false);
   const g = report.grade;
   if (!g) return null;
 
@@ -939,10 +943,56 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
   const bag = report.bag_resources;
   const dustBudget = bag?.stardust ?? report.budget?.stardust ?? null;
 
+  // ---- The build queue. Resources are handed out in this order; change the order and everything is recalculated. ----
+  const byImpact = [...lv].sort((a, b) => b.impact - a.impact || a.cost.dust - b.cost.dust);
+  const defaultIds = byImpact.map((r) => r.id);
+  const queueIds = queueOrder
+    ? [...queueOrder.filter((id) => defaultIds.includes(id)), ...defaultIds.filter((id) => !queueOrder.includes(id))]
+    : defaultIds;
+  const posOf = new Map(queueIds.map((id, i) => [id, i]));
+  const ledgerData = report.resource_ledger_data;
+  const canRecalc = Boolean(ledgerData) && lv.every((r) => r.cost_bundle);
+  const liveResults = canRecalc
+    ? allocateQueue(
+        queueIds.map((id) => {
+          const r = lv.find((x) => x.id === id)!;
+          return { id, cost: r.cost_bundle!, familyKeys: r.family_keys || [] };
+        }),
+        ledgerData!,
+        { allowRareCandy: allowRare },
+      )
+    : null;
+  const liveById = new Map((liveResults || []).map((x) => [x.id, x]));
+  const lvLive = lv.map((r) => {
+    const res = liveById.get(r.id);
+    return res
+      ? { ...r, affordability: res, can_build_now: res.status === 'READY' ? true : res.status === 'CHECK' ? undefined : false }
+      : r;
+  });
+  const canReorder = canRecalc && planSort === 'impact' && planDir === 'desc';
+  const groupOf = (r: (typeof lv)[0]) => {
+    const st = lvLive.find((x) => x.id === r.id)?.affordability?.status;
+    return st === 'READY' ? 'ready' : st === 'CHECK' ? 'check' : 'blocked';
+  };
+  const moveInQueue = (id: string, dir: -1 | 1) => {
+    const me = lvLive.find((x) => x.id === id);
+    if (!me) return;
+    const mine = groupOf(me);
+    const idx = queueIds.indexOf(id);
+    let j = idx + dir;
+    while (j >= 0 && j < queueIds.length && groupOf(lvLive.find((x) => x.id === queueIds[j])!) !== mine) j += dir;
+    if (j < 0 || j >= queueIds.length) return;
+    const next = [...queueIds];
+    next.splice(idx, 1);
+    next.splice(j, 0, id);
+    setQueueOrder(next);
+  };
+  const moveFirst = (id: string) => setQueueOrder([id, ...queueIds.filter((x) => x !== id)]);
+
   const sortPlanRows = (rows: typeof lv) => {
     const mul = planDir === 'asc' ? 1 : -1;
     return [...rows].sort((a, b) => {
-      if (planSort === 'impact') return (a.impact - b.impact) * mul || a.cost.dust - b.cost.dust;
+      if (planSort === 'impact') return ((posOf.get(a.id) ?? 0) - (posOf.get(b.id) ?? 0)) * (planDir === 'desc' ? 1 : -1);
       if (planSort === 'dust') return (a.cost.dust - b.cost.dust) * mul || b.impact - a.impact;
       if (planSort === 'cp') return (a.cp - b.cp) * mul;
       if (planSort === 'level') return (a.level - b.level) * mul;
@@ -952,25 +1002,25 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
 
   // READY = proven affordable in queue order. CHECK = nothing known is short, but a balance or price is unknown.
   // BLOCKED / NOT AFFORDABLE = a known resource is short (after earlier builds in the queue took theirs, or even without that).
-  const hasAllocation = lv.some((r) => r.affordability !== undefined);
+  const hasAllocation = lvLive.some((r) => r.affordability !== undefined);
   const statusOf = (r: (typeof lv)[0]) => r.affordability?.status;
   const canBuildNow = sortPlanRows(
     hasAllocation
-      ? lv.filter((r) => statusOf(r) === 'READY')
+      ? lvLive.filter((r) => statusOf(r) === 'READY')
       : dustBudget
-      ? lv.filter((r) => r.cost.dust <= dustBudget)
-      : lv,
+      ? lvLive.filter((r) => r.cost.dust <= dustBudget)
+      : lvLive,
   );
-  const checkQueue = sortPlanRows(hasAllocation ? lv.filter((r) => statusOf(r) === 'CHECK') : []);
+  const checkQueue = sortPlanRows(hasAllocation ? lvLive.filter((r) => statusOf(r) === 'CHECK') : []);
   const blockedQueue = sortPlanRows(
     hasAllocation
-      ? lv.filter((r) => statusOf(r) === 'BLOCKED' || statusOf(r) === 'NOT_AFFORDABLE')
+      ? lvLive.filter((r) => statusOf(r) === 'BLOCKED' || statusOf(r) === 'NOT_AFFORDABLE')
       : dustBudget
-      ? lv.filter((r) => r.cost.dust > dustBudget)
+      ? lvLive.filter((r) => r.cost.dust > dustBudget)
       : [],
   );
   const nameOf = (id: string) => {
-    const hit = lv.find((x) => x.id === id);
+    const hit = lvLive.find((x) => x.id === id);
     return hit ? `${hit.species} (${hit.iv})` : id;
   };
 
@@ -1078,6 +1128,13 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
       </div>
 
       <div className="flex shrink-0 items-center gap-3">
+        {canReorder && (
+          <span className="inline-flex items-center gap-1">
+            <button type="button" onClick={() => moveInQueue(r.id, -1)} title="Build earlier" className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:border-teal-500 dark:border-slate-700">▲</button>
+            <button type="button" onClick={() => moveInQueue(r.id, 1)} title="Build later" className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:border-teal-500 dark:border-slate-700">▼</button>
+            <button type="button" onClick={() => moveFirst(r.id)} title="Spend resources on this one first" className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] hover:border-teal-500 dark:border-slate-700">Build first</button>
+          </span>
+        )}
         {r.affordability && (
           <span
             className={`rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase ${
@@ -1158,6 +1215,27 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
           </button>
         </div>
       </div>
+
+      {canRecalc && (
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-xs dark:border-slate-800/90 dark:bg-[#0F1B28]">
+          <label className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+            <input type="checkbox" checked={allowRare} onChange={(e) => setAllowRare(e.target.checked)} className="h-3.5 w-3.5" />
+            Let my Rare Candy
+            {ledgerData && ledgerData.rare_candy.state === 'known' ? ` (${formatNum(ledgerData.rare_candy.value)})` : ''} and Rare Candy XL
+            {ledgerData && ledgerData.rare_candy_xl.state === 'known' ? ` (${formatNum(ledgerData.rare_candy_xl.value)})` : ''} cover Candy shortages
+          </label>
+          <span className="text-slate-500">
+            {canReorder
+              ? 'Use ▲ ▼ or "Build first" on a build to change the order. Everything recalculates.'
+              : 'Sort by Priority (high to low) to change the build order.'}
+          </span>
+          {queueOrder && (
+            <button type="button" onClick={() => setQueueOrder(null)} className="font-semibold text-teal-600 hover:underline dark:text-teal-400">
+              Reset to priority order
+            </button>
+          )}
+        </div>
+      )}
 
       {/* What the export says you hold: every balance is KNOWN or UNKNOWN, never silently 0 */}
       {report.resource_ledger && (
