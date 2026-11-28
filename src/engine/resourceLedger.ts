@@ -373,7 +373,8 @@ function checkCost(cost: CostBundle, bal: Remaining, familyKeys: string[], opts:
   ) => {
     if (need <= 0) return;
     if (!balances) {
-      return push({ key, label, need, have: null, status: 'unknown', note: 'Species balance not in the export: check in-game' });
+      // The export does not contain species candy, so it is not included in ledger checks
+      return;
     }
     const k = famKey(balances, familyKeys);
     const have = k ? balances[k] ?? 0 : 0;
@@ -507,14 +508,8 @@ export function summarizeLedger(l: Ledger): LedgerSummaryRow[] {
     a.state === 'known'
       ? { key, label, state: 'known', value: a.value, basis: a.basis }
       : { key, label, state: 'unknown', reason: a.reason };
-  const famRow = (key: string, label: string, b: FamilyBalances): LedgerSummaryRow =>
-    b.state === 'known'
-      ? { key, label, state: 'known', value: Object.values(b.byFamily).reduce((s, v) => s + v, 0), basis: 'listed' }
-      : { key, label, state: 'unknown', reason: b.reason };
   return [
     row('stardust', 'Stardust', l.stardust),
-    famRow('species_candy', 'Species Candy', l.species_candy),
-    famRow('species_xl_candy', 'Species XL Candy', l.species_xl_candy),
     row('rare_candy', 'Rare Candy', l.rare_candy),
     row('rare_candy_xl', 'Rare Candy XL', l.rare_candy_xl),
     row('fast_tm', 'Fast TM', l.fast_tm),
@@ -522,6 +517,5 @@ export function summarizeLedger(l: Ledger): LedgerSummaryRow[] {
     row('elite_fast_tm', 'Elite Fast TM', l.elite_fast_tm),
     row('elite_charged_tm', 'Elite Charged TM', l.elite_charged_tm),
     row('max_particles', 'Max Particles', l.max_particles),
-    famRow('mega_energy', 'Mega Energy', l.mega_energy),
   ];
 }

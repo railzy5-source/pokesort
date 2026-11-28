@@ -420,10 +420,22 @@ export function heldEliteMoves(
   return held;
 }
 
+/** Unify species.eliteMoves AND species.legacyMoves into one uppercase deduplicated list. */
+export function allEliteMoveIds(
+  sp?: { eliteMoves?: string[]; legacyMoves?: string[] } | null,
+): string[] {
+  if (!sp) return [];
+  const out = new Set<string>();
+  for (const m of sp.eliteMoves || []) if (m) out.add(String(m).toUpperCase());
+  for (const m of sp.legacyMoves || []) if (m) out.add(String(m).toUpperCase());
+  return Array.from(out);
+}
+
 export function currentMoves(pve: PveContext, mon: MonModel): CurrentMoveInfo[] {
   if (!pve.ok) return [];
+  const combinedElite = allEliteMoveIds(mon.species);
   const elite = new Set(
-    mon.species?.eliteMoves ? heldEliteMoves(pve, mon, mon.species.eliteMoves) || [] : [],
+    combinedElite.length ? heldEliteMoves(pve, mon, combinedElite) || [] : [],
   );
   const out: CurrentMoveInfo[] = [];
   const slots: [CurrentMoveInfo['slot'], 'move1' | 'move2' | 'move3'][] = [
@@ -498,7 +510,7 @@ export function pickRaidMoveset(
   let gain = Number(rc.tm_min_gain_pct ?? 5.0);
   if (unreadable || gain < 0) return [label(best), ''];
 
-  const elite = new Set((species.eliteMoves || []).map((e) => String(e).toUpperCase()));
+  const elite = new Set(allEliteMoveIds(species));
   if (
     [best[1], best[2]].some(
       (mid) => elite.has(String(mid).toUpperCase()) && !have.has(moveLabel(mid).toLowerCase()),
@@ -634,7 +646,7 @@ export function readinessFields(
   const targetSid = mon.evolve_to_sid || currentSid;
   const target = dex.byId.get(targetSid) || mon.species;
 
-  const eliteIds = new Set((target.eliteMoves || []).map((e) => String(e).toUpperCase()));
+  const eliteIds = new Set(allEliteMoveIds(target));
   const poolOf = (sp: PvPokeSpecies) => {
     const s = new Set<string>();
     for (const mid of sp.fastMoves || []) s.add(String(mid).toUpperCase());
@@ -706,6 +718,41 @@ export function readinessFields(
       out.status_reason = [out.needs_typed.map(formatTmItem).join(' · '), optionalText ? `optional TM: ${optionalText}` : '']
         .filter(Boolean)
         .join(' · ');
+    }
+  } else if (verdict === 'BUILD_PVP') {
+    const needsEvo = targetSid !== currentSid;
+    const needsLvl = Boolean(mon.power_up_to && mon.power_up_to > mon.level + 0.1);
+    const suboptimalRank = Boolean(mon.best_pvp && mon.best_pvp.cap < 10000 && mon.best_pvp.iv_rank > 50);
+    const lowSim = Boolean(mon.pvp_battle && mon.pvp_battle.win_rate_1v1 < 45);
+    if (needsEvo) {
+      out.build_status = 'Needs evolution';
+      out.status_reason = [
+        `Evolve to ${cleanSpeciesName(target.speciesName)} first`,
+        unlockNote,
+        tmText,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    } else if (eliteGap.length > 0) {
+      out.build_status = 'Needs Elite TM';
+      out.status_reason = [unlockNote, tmText].filter(Boolean).join(' · ');
+    } else if (secondSlotGap) {
+      out.build_status = 'Needs second charged move';
+      out.status_reason = [unlockNote, tmText].filter(Boolean).join(' · ');
+    } else if (regularGap.length > 0) {
+      out.build_status = 'Needs TM';
+      out.status_reason = tmText ? `Needs ${tmText}` : '';
+    } else if (needsLvl) {
+      out.build_status = 'Needs power-up';
+      out.status_reason = `All moves ready · power up L${Math.round(mon.level * 10) / 10} → L${mon.power_up_to}`;
+    } else if (suboptimalRank || lowSim) {
+      out.build_status = 'Usable (not optimal)';
+      out.status_reason = suboptimalRank
+        ? `Playable now (IV rank #${mon.best_pvp?.iv_rank} — hold out for a tighter PvP spread before heavy XL/ETM)`
+        : `Playable now (${mon.pvp_battle?.win_rate_1v1}% 1v1 meta win rate)`;
+    } else {
+      out.build_status = 'Ready';
+      out.status_reason = 'All optimal moves and CP ready';
     }
   } else if (eliteGap.length > 0) {
     out.build_status = 'Needs Elite TM';

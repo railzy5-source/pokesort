@@ -40,9 +40,12 @@ export type VerdictType =
 
 export type BuildStatus =
   | 'Ready'
+  | 'Usable (not optimal)'
   | 'Needs TM'
   | 'Needs second charged move'
   | 'Needs Elite TM'
+  | 'Needs evolution'
+  | 'Needs power-up'
   | 'Unknown';
 
 export interface RawPokemon {
@@ -458,6 +461,7 @@ export interface PvpEntry {
   ineligible_reason?: string;
   cup?: string;
   already_at_target?: boolean;
+  move_score_adj?: number;
 }
 
 export interface BreakpointHit {
@@ -833,6 +837,24 @@ export interface RaidTeamEntry {
   /** The score this entry is ranked by. Pokébattler points or internal formula: see `score_source`. NOT a DPS. */
   rank_score?: number;
   score_source?: 'pokebattler' | 'internal';
+  /** Stage 4: real current moveset DPS on this specimen (0 if unevolved or off-type fast/unreadable). */
+  current_dps?: number;
+  /** Stage 4: best attainable DPS including Elite moves at current level. */
+  best_attainable_dps?: number;
+  /** Stage 4: best DPS using regular TMs only (no Elite TM). */
+  after_regular_tm_dps?: number;
+  /** Stage 4: best DPS with Elite TM allowed. */
+  after_elite_tm_dps?: number;
+  /** Stage 4: true if a Fast TM meaningfully improves DPS or fixes a missing on-type fast move. */
+  fast_tm_worthwhile?: boolean;
+  /** Stage 4: true if the specimen is Fast-ready and Charged TMs are strictly optional. */
+  charged_tm_optional?: boolean;
+  /** Stage 4: true if pre-evolution must evolve first. */
+  evolve_first?: boolean;
+  /** Stage 4 View B: how this entry was upgraded (or 'ALREADY_READY'). */
+  investment_status?: 'ALREADY_READY' | 'READY' | 'CHECK';
+  /** Stage 4 View B: summary of affordable investments applied for View B. */
+  investment_applied?: string[];
 }
 
 export type RaidEntryStatus = 'ready' | 'needs_tm' | 'blocked';
@@ -875,6 +897,19 @@ export interface RaidTeamTypeBlock {
   fix_queue?: RaidTeamEntry[];
   /** Counts used for the status header. */
   status_counts?: { ready: number; needs_tm: number; blocked: number };
+  /** Stage 4 View B: resource-limited lineup after sequential affordable investments (allocateQueue). */
+  after_investment?: {
+    entries: RaidTeamEntry[];
+    mega: RaidTeamTypeBlock['mega'];
+    avg_team_dps: number;
+    upgrades_applied: number;
+    check_candidates: {
+      id: string;
+      name: string;
+      dps: number;
+      reason: string;
+    }[];
+  };
 }
 
 export interface MaxTeamTypeBlock {
@@ -1150,6 +1185,74 @@ export interface LevelTheseItem {
   cost_bundle?: CostBundle;
   /** Keys of this Pokémon's family in per-family balances. */
   family_keys?: string[];
+  /** Stage 3b: Shared roles strengthened by the same upgrade (e.g., Mega + Raid, ML + Raid). */
+  shared_roles?: string[];
+  /** Stage 3b: Marginal % gain over weakest active role slot. */
+  gain_pct?: number | null;
+  /** Stage 3b: Current weakest holder / open slot this build improves upon. */
+  weakest_in_role?: string;
+  /** Stage 3b: Explicit advisor warnings (tiny upgrade, save Elite TM, unknown balance, do not invest). */
+  advisor_messages?: string[];
+}
+
+export type RoleAdvisorRecommendation =
+  | 'INVEST'
+  | 'ALREADY_READY'
+  | 'DO_NOT_INVEST'
+  | 'BETTER_OWNED'
+  | 'TINY_UPGRADE'
+  | 'SAVE_ELITE_TM'
+  | 'CHECK_UNKNOWN'
+  | 'NONE_OWNED';
+
+export interface RoleInvestmentAdvice {
+  roleKey: string;
+  category: 'raid' | 'mega' | 'max' | 'pvp';
+  roleLabel: string;
+  bestSpecimen: {
+    id: string;
+    name: string;
+    from?: string;
+    cp: number;
+    level: number;
+    iv: string;
+    iv_pct: number;
+    verdict: VerdictType;
+    search: string;
+  } | null;
+  currentPerformance: { value: number; unit: string; label: string } | null;
+  bestAchievablePerformance: { value: number; unit: string; label: string } | null;
+  weakestInRole: { id?: string; name: string; value: number; unit: string } | null;
+  improvement: { delta: number; pct: number | null; summary: string };
+  whatChanges: string[];
+  sharedActions: string[];
+  cost: {
+    dust: number;
+    candy: number;
+    xl: number;
+    fast_tm: number;
+    charged_tm: number;
+    elite_fast_tm: number;
+    elite_charged_tm: number;
+    items: string[];
+    mega_energy: number | null;
+    unknown_costs: string[];
+    estimated: string[];
+  };
+  affordNow: 'READY' | 'CHECK' | 'BLOCKED' | 'NOT_AFFORDABLE' | 'NO_ACTION';
+  affordabilityDetail: string;
+  alternativesConsidered: {
+    id: string;
+    name: string;
+    cp: number;
+    level: number;
+    iv: string;
+    perfLabel: string;
+    costSummary: string;
+    reason: string;
+  }[];
+  recommendation: RoleAdvisorRecommendation;
+  messages: string[];
 }
 
 export interface BriefingEventItem {
@@ -1646,6 +1749,8 @@ export interface ReportJson {
   };
   priority: {
     ml: PriorityEntry[];
+    gl?: PriorityEntry[];
+    ul?: PriorityEntry[];
     glul: PriorityEntry[];
     dn: PriorityEntry[];
     spend_first?: PriorityEntry[];
@@ -1717,6 +1822,7 @@ export interface ReportJson {
         team: RaidTeamEntry[];
         fix_queue?: RaidTeamEntry[];
         status_counts?: { ready: number; needs_tm: number; blocked: number };
+        after_investment?: RaidTeamTypeBlock['after_investment'];
         mega: RaidTeamTypeBlock['mega'];
         mega_candidate?: RaidTeamTypeBlock['mega_candidate'];
         best_dps: number;
@@ -1899,6 +2005,7 @@ export interface ReportJson {
       names: string[];
     }[];
     narrative: { headline: string; body: string };
+    investment_advisor?: RoleInvestmentAdvice[];
   };
   placement: {
     raid: {

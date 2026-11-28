@@ -46,9 +46,9 @@ export function familyKeysFor(mon: MonModel | undefined, dex: Dex): string[] {
 export function costBundleFor(item: LevelTheseItem, mon: MonModel | undefined, r: ReportMon, dex: Dex): CostBundle {
   const cost = emptyCost();
   cost.stardust = r.cost_dust;
-  cost.species_candy = r.cost_candy;
-  cost.species_xl_candy = r.cost_xl;
-  if (r.cost_estimated) cost.estimated.push('evolution Candy cost');
+  // Species candy is not in the export, so it is not included in the tracked cost bundle
+  cost.species_candy = 0;
+  cost.species_xl_candy = 0;
 
   // ---- second charged move: the price is per species and comes from the game master ----
   const wantsSecond = Boolean(item.needs_second_move) || r.build_status === 'Needs second charged move';
@@ -56,7 +56,6 @@ export function costBundleFor(item: LevelTheseItem, mon: MonModel | undefined, r
     const price = secondMoveCost(mon.species.speciesId, { isShadow: mon.is_shadow, isPurified: mon.is_purified });
     if (price) {
       cost.stardust += price.dust;
-      cost.species_candy += price.candy;
     } else {
       cost.unknown_costs.push('Second charged move price (needs live game data)');
     }

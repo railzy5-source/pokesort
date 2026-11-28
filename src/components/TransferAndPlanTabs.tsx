@@ -9,7 +9,7 @@ import {
   ShieldAlert,
   Trash2,
 } from 'lucide-react';
-import type { ReportJson } from '../engine/types';
+import type { ReportJson, RoleAdvisorRecommendation, RoleInvestmentAdvice } from '../engine/types';
 import { solveDustBudgetPlan } from '../engine/bossAndCompare';
 import { allocateQueue } from '../engine/resourceLedger';
 import { copyToClipboard, formatNum, type TabKey } from './uiTokens';
@@ -927,11 +927,14 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
   // Your own build order (null = the app's priority order) and whether Rare Candy may cover Candy shortages
   const [queueOrder, setQueueOrder] = useState<string[] | null>(null);
   const [allowRare, setAllowRare] = useState(false);
+  const [budgetVal, setBudgetVal] = useState<number>(report.bag_resources?.stardust || 250000);
+  const [advisorCategory, setAdvisorCategory] = useState<'all' | 'raid' | 'mega' | 'max' | 'pvp'>('all');
+  const [advisorRecFilter, setAdvisorRecFilter] = useState<'all' | 'actionable' | 'warnings'>('all');
+  const [showAllAdvisor, setShowAllAdvisor] = useState(false);
+  const [expandedAdvisorKeys, setExpandedAdvisorKeys] = useState<Record<string, boolean>>({});
   const g = report.grade;
-  if (!g) return null;
-
-  const tm = g.tm_here || { regular: [], elite_worth: [], elite_skip: { count: 0, summary: '' } };
-  const lv = (g.level_these || []).filter(
+  const lvAll = g?.level_these || [];
+  const lv = lvAll.filter(
     (r) =>
       r.cost.dust > 0 ||
       r.cost.candy > 0 ||
@@ -940,6 +943,10 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
       r.tm_needed.length > 0 ||
       r.evolve_to,
   );
+  const budgetPlan = useMemo(() => solveDustBudgetPlan(lv, budgetVal, report.mons), [lv, budgetVal, report.mons]);
+  if (!g) return null;
+
+  const tm = g.tm_here || { regular: [], elite_worth: [], elite_skip: { count: 0, summary: '' } };
   const bag = report.bag_resources;
   const dustBudget = bag?.stardust ?? report.budget?.stardust ?? null;
 
@@ -1060,12 +1067,35 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
             </span>
           )}
         </div>
-        <div className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">{r.role}</div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-600 dark:text-slate-400">
+          <span>{r.role}</span>
+          {r.weakest_in_role && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>vs {r.weakest_in_role}</span>
+            </>
+          )}
+          {typeof r.gain_pct === 'number' && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono tabular-nums font-semibold text-teal-700 dark:text-teal-300">
+                {r.gain_pct >= 0 ? '+' : ''}{r.gain_pct}% role gain
+              </span>
+            </>
+          )}
+          {r.shared_roles && r.shared_roles.length > 0 && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="font-medium text-sky-700 dark:text-sky-300">
+                Shared: {r.shared_roles.join(' + ')}
+              </span>
+            </>
+          )}
+        </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
           {r.cost.dust > 0 && (
             <span className="font-mono tabular-nums text-amber-600 dark:text-amber-400">
-              {formatNum(r.cost.dust)} dust · {formatNum(r.cost.candy)} candy
-              {r.cost.xl > 0 ? ` · ${r.cost.xl} XL` : ''}
+              {formatNum(r.cost.dust)} dust
             </span>
           )}
           {r.needs_second_move && (
@@ -1097,6 +1127,13 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
             )
           )}
         </div>
+        {r.advisor_messages && r.advisor_messages.length > 0 && (
+          <div className="mt-1 space-y-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+            {r.advisor_messages.map((msg) => (
+              <div key={msg}>{msg}</div>
+            ))}
+          </div>
+        )}
         {r.affordability && r.affordability.status !== 'READY' && (
           <div className="mt-1 space-y-0.5 text-[11px] leading-snug">
             {r.affordability.lines
@@ -1286,91 +1323,336 @@ export const BuildPlanTab: React.FC<BuildPlanTabProps> = ({
       )}
 
       {/* Feature 6: Stardust & Candy "Shopping Cart" / Budget Planner */}
-      {(() => {
-        const [budgetVal, setBudgetVal] = useState<number>(bag?.stardust || 250000);
-        const budgetPlan = useMemo(() => solveDustBudgetPlan(lv, budgetVal, report.mons), [lv, budgetVal, report.mons]);
+      <div className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              Stardust &amp; Candy "Shopping Cart" Budget Planner
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              Greedily selects highest-impact builds fitting within your Stardust limit.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {[
+              ['Bag Dust', bag?.stardust || 100000],
+              ['100k', 100000],
+              ['250k', 250000],
+              ['500k', 500000],
+              ['1M', 1000000],
+            ].map(([lbl, val]) => (
+              <button
+                key={lbl}
+                type="button"
+                onClick={() => setBudgetVal(Number(val))}
+                className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                  budgetVal === Number(val)
+                    ? 'border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-300'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'
+                }`}
+              >
+                {lbl}
+              </button>
+            ))}
+            <input
+              type="number"
+              min={0}
+              step={10000}
+              value={budgetVal}
+              onChange={(e) => setBudgetVal(Math.max(0, Number(e.target.value)))}
+              className="w-28 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs tabular-nums text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              placeholder="Custom dust"
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 sm:grid-cols-4 dark:border-slate-800 dark:bg-slate-900/40">
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Selected Builds</div>
+            <div className="mt-0.5 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
+              {budgetPlan.selectedItems.length} builds
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Total Dust Required</div>
+            <div className="mt-0.5 font-mono text-base font-bold tabular-nums text-amber-600 dark:text-amber-400">
+              {formatNum(budgetPlan.totalDust)}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Candy / XL Used</div>
+            <div className="mt-0.5 font-mono text-xs font-bold tabular-nums text-slate-900 dark:text-slate-100">
+              {formatNum(budgetPlan.totalCandy)} / {formatNum(budgetPlan.totalXl)} XL
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Leftover Dust</div>
+            <div className="mt-0.5 font-mono text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+              {formatNum(budgetPlan.leftoverDust)}
+            </div>
+          </div>
+        </div>
+
+        {budgetPlan.combinedSearch && (
+          <div className="mt-3 flex items-center justify-between rounded-lg border border-teal-500/30 bg-teal-500/5 px-3 py-2 text-xs">
+            <span className="font-medium text-slate-700 dark:text-slate-300">
+              Copy Search String for All {budgetPlan.selectedItems.length} Budget Builds: <code className="font-mono text-teal-700 dark:text-teal-300">{budgetPlan.combinedSearch}</code>
+            </span>
+            <button
+              type="button"
+              onClick={() => copySearch(budgetPlan.combinedSearch, 'Budget Builds Search')}
+              className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded border border-teal-500/40 bg-white px-2.5 py-1 font-semibold text-teal-700 hover:bg-teal-500/10 dark:bg-[#0F1B28] dark:text-teal-300"
+            >
+              <Copy className="h-3 w-3" /> Copy
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Stage 3b: Per-Role Investment Advisor */}
+      {g.investment_advisor && g.investment_advisor.length > 0 && (() => {
+        const recText = (rec: RoleAdvisorRecommendation): { label: string; cls: string } => {
+          if (rec === 'INVEST') return { label: 'Worth investing', cls: 'text-teal-700 dark:text-teal-300' };
+          if (rec === 'ALREADY_READY') return { label: 'Already ready', cls: 'text-emerald-700 dark:text-emerald-300' };
+          if (rec === 'CHECK_UNKNOWN') return { label: 'Check bag first', cls: 'text-amber-700 dark:text-amber-300' };
+          if (rec === 'SAVE_ELITE_TM') return { label: 'Save Elite TM', cls: 'text-amber-700 dark:text-amber-300' };
+          if (rec === 'TINY_UPGRADE') return { label: 'Tiny upgrade', cls: 'text-orange-700 dark:text-orange-300' };
+          if (rec === 'BETTER_OWNED') return { label: 'Better specimen owned', cls: 'text-sky-700 dark:text-sky-300' };
+          if (rec === 'DO_NOT_INVEST') return { label: 'Do not invest', cls: 'text-rose-700 dark:text-rose-300' };
+          return { label: 'None owned', cls: 'text-slate-500 dark:text-slate-400' };
+        };
+        const filteredAdvisor: RoleInvestmentAdvice[] = g.investment_advisor.filter((row) => {
+          if (advisorCategory !== 'all' && row.category !== advisorCategory) return false;
+          if (advisorRecFilter === 'actionable') {
+            return row.recommendation === 'INVEST' || row.recommendation === 'CHECK_UNKNOWN';
+          }
+          if (advisorRecFilter === 'warnings') {
+            return (
+              row.messages.length > 0 ||
+              row.recommendation === 'TINY_UPGRADE' ||
+              row.recommendation === 'SAVE_ELITE_TM' ||
+              row.recommendation === 'DO_NOT_INVEST' ||
+              row.recommendation === 'BETTER_OWNED'
+            );
+          }
+          return true;
+        });
+        const shownAdvisor = showAllAdvisor ? filteredAdvisor : filteredAdvisor.slice(0, 12);
         return (
           <div className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  Stardust &amp; Candy "Shopping Cart" Budget Planner
+                  Role-by-Role Investment Advisor ({filteredAdvisor.length})
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                  Greedily selects highest-impact builds fitting within your Stardust limit.
+                  Best specimen per Raid type, Mega, Max Battle, and PvP League — compares achievable performance against your weakest current slot and flags tiny upgrades or unknown costs.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {[
-                  ['Bag Dust', bag?.stardust || 100000],
-                  ['100k', 100000],
-                  ['250k', 250000],
-                  ['500k', 500000],
-                  ['1M', 1000000],
-                ].map(([lbl, val]) => (
-                  <button
-                    key={lbl}
-                    type="button"
-                    onClick={() => setBudgetVal(Number(val))}
-                    className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
-                      budgetVal === Number(val)
-                        ? 'border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-300'
-                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'
-                    }`}
-                  >
-                    {lbl}
-                  </button>
-                ))}
-                <input
-                  type="number"
-                  min={0}
-                  step={10000}
-                  value={budgetVal}
-                  onChange={(e) => setBudgetVal(Math.max(0, Number(e.target.value)))}
-                  className="w-28 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                  placeholder="Custom dust"
-                />
+                <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-900">
+                  {(['all', 'raid', 'mega', 'max', 'pvp'] as const).map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setAdvisorCategory(cat)}
+                      className={`whitespace-nowrap shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                        advisorCategory === cat
+                          ? 'bg-white text-slate-900 shadow-sm dark:bg-[#0F1B28] dark:text-slate-100'
+                          : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                      }`}
+                    >
+                      {cat === 'all' ? 'All Roles' : cat === 'max' ? 'Max Battles' : cat === 'pvp' ? 'PvP' : cat[0].toUpperCase() + cat.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                <select
+                  value={advisorRecFilter}
+                  onChange={(e) => setAdvisorRecFilter(e.target.value as typeof advisorRecFilter)}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-[#0F1B28] dark:text-slate-200"
+                >
+                  <option value="all">All Recommendations</option>
+                  <option value="actionable">Actionable Upgrades</option>
+                  <option value="warnings">Warnings / Hold Back</option>
+                </select>
               </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 dark:border-slate-800 dark:bg-slate-900/40">
-              <div>
-                <div className="text-[10px] uppercase font-semibold text-slate-500">Selected Builds</div>
-                <div className="mt-0.5 font-mono text-base font-bold text-slate-900 dark:text-slate-100">
-                  {budgetPlan.selectedItems.length} builds
+            <div className="mt-4 divide-y divide-slate-100 dark:divide-slate-800">
+              {shownAdvisor.map((row) => {
+                const rec = recText(row.recommendation);
+                const isExp = Boolean(expandedAdvisorKeys[row.roleKey]);
+                const costParts: string[] = [];
+                if (row.cost.dust > 0) costParts.push(`${formatNum(row.cost.dust)} dust`);
+                if (row.cost.fast_tm > 0) costParts.push(`${row.cost.fast_tm} Fast TM`);
+                if (row.cost.charged_tm > 0) costParts.push(`${row.cost.charged_tm} Charged TM`);
+                if (row.cost.elite_fast_tm > 0) costParts.push(`${row.cost.elite_fast_tm} Elite Fast TM`);
+                if (row.cost.elite_charged_tm > 0) costParts.push(`${row.cost.elite_charged_tm} Elite Charged TM`);
+                if (row.cost.mega_energy && row.cost.mega_energy > 0) costParts.push(`${formatNum(row.cost.mega_energy)} Mega Energy`);
+                for (const it of row.cost.items) costParts.push(it);
+                const affordLabel =
+                  row.affordNow === 'NO_ACTION'
+                    ? 'Ready'
+                    : row.affordNow === 'CHECK'
+                    ? 'Check in-game'
+                    : row.affordNow === 'NOT_AFFORDABLE'
+                    ? 'Not affordable'
+                    : row.affordNow;
+                return (
+                  <div key={row.roleKey} className="py-3.5">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            {row.roleLabel}
+                          </span>
+                          <span aria-hidden="true" className="text-slate-400">·</span>
+                          <span className={`text-xs font-semibold ${rec.cls}`}>{rec.label}</span>
+                          {row.affordNow !== 'NO_ACTION' && (
+                            <>
+                              <span aria-hidden="true" className="text-slate-400">·</span>
+                              <span className="text-xs text-slate-600 dark:text-slate-400">
+                                {affordLabel}
+                              </span>
+                            </>
+                          )}
+                        </div>
+
+                        {row.bestSpecimen ? (
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-700 dark:text-slate-300">
+                            <span>Best:</span>
+                            <button
+                              type="button"
+                              onClick={() => onInspectId(row.bestSpecimen!.id)}
+                              className="font-semibold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
+                            >
+                              {row.bestSpecimen.name}
+                            </button>
+                            <span className="font-mono tabular-nums text-slate-500">
+                              CP {formatNum(row.bestSpecimen.cp)} · L{row.bestSpecimen.level} · {row.bestSpecimen.iv}
+                            </span>
+                            {row.bestSpecimen.from && (
+                              <span className="text-slate-500">(from {row.bestSpecimen.from})</span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-xs text-slate-500">No owned candidate in bag.</div>
+                        )}
+
+                        {row.currentPerformance && row.bestAchievablePerformance && (
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 font-mono text-xs tabular-nums text-slate-600 dark:text-slate-400">
+                            <span>Now: {row.currentPerformance.label}</span>
+                            <span aria-hidden="true">→</span>
+                            <span className="font-semibold text-slate-900 dark:text-slate-200">
+                              Potential: {row.bestAchievablePerformance.label}
+                            </span>
+                            {row.weakestInRole && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span>Role floor: {row.weakestInRole.name}</span>
+                              </>
+                            )}
+                            <span aria-hidden="true">·</span>
+                            <span className="font-semibold text-teal-700 dark:text-teal-300">
+                              {row.improvement.summary}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-slate-600 dark:text-slate-400">
+                          <span>Changes: {row.whatChanges.join(' · ')}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-mono tabular-nums">
+                            Cost: {costParts.length > 0 ? costParts.join(', ') : 'Free'}
+                            {row.cost.unknown_costs.length > 0 ? ` (+ unknown ${row.cost.unknown_costs.join(', ')})` : ''}
+                          </span>
+                        </div>
+
+                        {row.sharedActions.length > 0 && (
+                          <div className="mt-0.5 text-xs font-medium text-sky-700 dark:text-sky-300">
+                            Shared value: {row.sharedActions.join(' · ')}
+                          </div>
+                        )}
+
+                        {row.affordNow !== 'NO_ACTION' && (
+                          <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                            {row.affordabilityDetail}
+                          </div>
+                        )}
+
+                        {row.messages.length > 0 && (
+                          <div className="mt-1 space-y-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                            {row.messages.map((msg) => (
+                              <div key={msg}>{msg}</div>
+                            ))}
+                          </div>
+                        )}
+
+                        {isExp && row.alternativesConsidered.length > 0 && (
+                          <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-xs text-slate-600 dark:border-slate-800 dark:text-slate-400">
+                            {row.alternativesConsidered.map((alt) => (
+                              <div key={alt.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => onInspectId(alt.id)}
+                                  className="font-medium text-slate-800 hover:text-teal-600 dark:text-slate-200 dark:hover:text-teal-400"
+                                >
+                                  {alt.name}
+                                </button>
+                                <span className="font-mono tabular-nums text-slate-500">
+                                  CP {formatNum(alt.cp)} · L{alt.level} · {alt.iv}
+                                </span>
+                                <span aria-hidden="true">·</span>
+                                <span className="font-mono tabular-nums">{alt.perfLabel}</span>
+                                <span aria-hidden="true">·</span>
+                                <span>{alt.reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        {row.alternativesConsidered.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedAdvisorKeys((prev) => ({ ...prev, [row.roleKey]: !prev[row.roleKey] }))
+                            }
+                            className="whitespace-nowrap shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:border-teal-500 dark:border-slate-700 dark:text-slate-300"
+                          >
+                            {isExp ? 'Hide alternatives' : `Alternatives (${row.alternativesConsidered.length})`}
+                          </button>
+                        )}
+                        {row.bestSpecimen && (
+                          <button
+                            type="button"
+                            onClick={() => copySearch(row.bestSpecimen!.search, row.bestSpecimen!.name)}
+                            className="inline-flex whitespace-nowrap shrink-0 items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:border-teal-500 dark:border-slate-700 dark:text-slate-300"
+                          >
+                            <Copy className="h-3 w-3" /> Search
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {filteredAdvisor.length === 0 && (
+                <div className="py-4 text-xs text-slate-500">
+                  No role advisor entries match this filter.
                 </div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase font-semibold text-slate-500">Total Dust Required</div>
-                <div className="mt-0.5 font-mono text-base font-bold text-amber-600 dark:text-amber-400">
-                  {formatNum(budgetPlan.totalDust)}
-                </div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase font-semibold text-slate-500">Candy / XL Used</div>
-                <div className="mt-0.5 font-mono text-xs font-bold text-slate-900 dark:text-slate-100">
-                  {formatNum(budgetPlan.totalCandy)} / {formatNum(budgetPlan.totalXl)} XL
-                </div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase font-semibold text-slate-500">Leftover Dust</div>
-                <div className="mt-0.5 font-mono text-base font-bold text-emerald-600 dark:text-emerald-400">
-                  {formatNum(budgetPlan.leftoverDust)}
-                </div>
-              </div>
+              )}
             </div>
 
-            {budgetPlan.combinedSearch && (
-              <div className="mt-3 flex items-center justify-between rounded-lg border border-teal-500/30 bg-teal-500/5 px-3 py-2 text-xs">
-                <span className="font-medium text-slate-700 dark:text-slate-300">
-                  Copy Search String for All {budgetPlan.selectedItems.length} Budget Builds: <code className="font-mono text-teal-700 dark:text-teal-300">{budgetPlan.combinedSearch}</code>
-                </span>
+            {filteredAdvisor.length > 12 && (
+              <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => copySearch(budgetPlan.combinedSearch, 'Budget Builds Search')}
-                  className="inline-flex items-center gap-1 rounded border border-teal-500/40 bg-white px-2.5 py-1 font-semibold text-teal-700 hover:bg-teal-500/10 dark:bg-[#0F1B28] dark:text-teal-300"
+                  onClick={() => setShowAllAdvisor((v) => !v)}
+                  className="text-xs font-semibold text-teal-600 hover:underline dark:text-teal-400"
                 >
-                  <Copy className="h-3 w-3" /> Copy
+                  {showAllAdvisor ? 'Show top 12 roles' : `Show all ${filteredAdvisor.length} roles`}
                 </button>
               </div>
             )}
@@ -1652,12 +1934,22 @@ interface PowerTabProps {
 }
 
 export const PowerTab: React.FC<PowerTabProps> = ({ report, onInspectId }) => {
-  const [sub, setSub] = useState<'ml' | 'glul' | 'dn'>('ml');
+  const [sub, setSub] = useState<'ml' | 'ul' | 'gl' | 'dn'>('ml');
   const [powerSort, setPowerSort] = useState<'default' | 'iv_rank' | 'dust' | 'cp' | 'species'>('default');
   const [powerDir, setPowerDir] = useState<SortDir>('asc');
   const p = report.priority;
+  const monMap = useMemo(() => new Map(report.mons.map((m) => [m.id, m])), [report.mons]);
+  const glList = useMemo(
+    () => p.gl ?? p.glul.filter((r) => !/ultra/i.test(r.league || r.tag || '')),
+    [p],
+  );
+  const ulList = useMemo(
+    () => p.ul ?? p.glul.filter((r) => /ultra/i.test(r.league || r.tag || '')),
+    [p],
+  );
   const rows = useMemo(() => {
-    const raw = (p[sub] || []).slice(0, 60);
+    const source = sub === 'gl' ? glList : sub === 'ul' ? ulList : p[sub] || [];
+    const raw = source.slice(0, 60);
     if (powerSort === 'default') return powerDir === 'asc' ? raw : [...raw].reverse();
     const mul = powerDir === 'asc' ? 1 : -1;
     return [...raw].sort((a, b) => {
@@ -1666,10 +1958,11 @@ export const PowerTab: React.FC<PowerTabProps> = ({ report, onInspectId }) => {
       if (powerSort === 'cp') return (a.cp - b.cp) * mul;
       return a.species.localeCompare(b.species) * mul;
     });
-  }, [p, sub, powerSort, powerDir]);
-  const tabs: { k: 'ml' | 'glul' | 'dn'; label: string }[] = [
+  }, [p, glList, ulList, sub, powerSort, powerDir]);
+  const tabs: { k: 'ml' | 'ul' | 'gl' | 'dn'; label: string }[] = [
     { k: 'ml', label: `Master League (${p.ml.length})` },
-    { k: 'glul', label: `Great & Ultra (${p.glul.length})` },
+    { k: 'ul', label: `Ultra League (${ulList.length})` },
+    { k: 'gl', label: `Great League (${glList.length})` },
     { k: 'dn', label: `Do Not Invest (${p.dn.length})` },
   ];
 
@@ -1680,7 +1973,7 @@ export const PowerTab: React.FC<PowerTabProps> = ({ report, onInspectId }) => {
           PvP Power-Up Priority
         </h1>
         <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
-          Ordered by combined Species Meta Rank + IV Rank with full Stardust, Candy, and XL Candy estimates.
+          Ordered by combined Species Meta Rank, PvP IV Rank, Moveset Readiness &amp; Dust/XL cost across Great, Ultra, and Master League.
         </p>
       </div>
 
@@ -1726,47 +2019,55 @@ export const PowerTab: React.FC<PowerTabProps> = ({ report, onInspectId }) => {
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-        {rows.map((r, i) => (
-          <div
-            key={`${r.id}-${r.league}`}
-            className="rounded-xl border border-slate-200/80 bg-white p-4 dark:border-slate-800/90 dark:bg-[#0F1B28]"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => onInspectId(r.id)}
-                className="text-left text-sm font-bold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
-              >
-                {i + 1}. {r.species}
-              </button>
-              <span className="shrink-0 font-mono text-[11px] font-semibold tabular-nums text-teal-700 dark:text-teal-300">
-                {r.tag}
-              </span>
-            </div>
-            <div className="mt-1 font-mono text-xs tabular-nums text-slate-500">
-              CP {formatNum(r.cp)} · {r.iv} · IV rank #{r.iv_rank}
-            </div>
-            {r.hint ? (
-              <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{r.hint}</div>
-            ) : (
-              <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-xs tabular-nums dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-600 dark:text-slate-300">
-                    L{r.from} → L{r.to} (CP {formatNum(r.target_cp)})
-                  </span>
-                  <span className="font-mono text-amber-600 dark:text-amber-400">
-                    {formatNum(r.dust)} dust{r.xl > 0 ? ` · ${r.xl} XL` : ''}
-                  </span>
-                </div>
-                {r.needs_second_move && (
-                  <div className="font-semibold text-sky-600 dark:text-sky-400">
-                    Needs 2nd Charged Move
-                  </div>
-                )}
+        {rows.map((r, i) => {
+          const mon = monMap.get(r.id);
+          return (
+            <div
+              key={`${r.id}-${r.league}`}
+              className="rounded-xl border border-slate-200/80 bg-white p-4 dark:border-slate-800/90 dark:bg-[#0F1B28]"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => onInspectId(r.id)}
+                  className="text-left text-sm font-bold text-slate-900 hover:text-teal-600 dark:text-slate-100 dark:hover:text-teal-400"
+                >
+                  {i + 1}. {r.species}
+                </button>
+                <span className="shrink-0 font-mono text-[11px] font-semibold tabular-nums text-teal-700 dark:text-teal-300">
+                  {r.tag}
+                </span>
               </div>
-            )}
-          </div>
-        ))}
+              <div className="mt-1 font-mono text-xs tabular-nums text-slate-500">
+                CP {formatNum(r.cp)} · {r.iv} · IV rank #{r.iv_rank}
+              </div>
+              {mon?.build_status && !r.hint && (
+                <div className="mt-1 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                  {mon.build_status}
+                </div>
+              )}
+              {r.hint ? (
+                <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{r.hint}</div>
+              ) : (
+                <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-xs tabular-nums dark:border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600 dark:text-slate-300">
+                      L{r.from} → L{r.to} (CP {formatNum(r.target_cp)})
+                    </span>
+                    <span className="font-mono text-amber-600 dark:text-amber-400">
+                      {formatNum(r.dust)} dust{r.xl > 0 ? ` · ${r.xl} XL` : ''}
+                    </span>
+                  </div>
+                  {r.needs_second_move && (
+                    <div className="font-semibold text-sky-600 dark:text-sky-400">
+                      Needs 2nd Charged Move
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
         {rows.length === 0 && (
           <div className="col-span-full rounded-xl border border-slate-200/80 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800/90 dark:bg-[#0F1B28]">
             No entries in this category.

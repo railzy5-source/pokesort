@@ -69,11 +69,18 @@ export function pbIdToSpeciesId(pbId: string): string {
     _GALARIAN_FORM: '_galarian',
     _HISUIAN_FORM: '_hisuian',
     _PALDEAN_FORM: '_paldean',
+    _PALDEAN_COMBAT_FORM: '_paldean_combat',
+    _PALDEAN_BLAZE_FORM: '_paldean_blaze',
+    _PALDEAN_AQUA_FORM: '_paldean_aqua',
     _ORIGIN_FORM: '_origin',
+    _ORIGIN: '_origin',
     _ALTERED_FORM: '', // default Giratina
     _BLACK_FORM: '_black',
+    _BLACK: '_black',
     _WHITE_FORM: '_white',
+    _WHITE: '_white',
     _THERIAN_FORM: '_therian',
+    _THERIAN: '_therian',
     _INCARNATE_FORM: '', // default Landorus etc.
     _ATTACK_FORM: '_attack',
     _DEFENSE_FORM: '_defense',
@@ -83,29 +90,54 @@ export function pbIdToSpeciesId(pbId: string): string {
     _ARIA_FORM: '',
     _PIROUETTE_FORM: '_pirouette',
     _FAN_FORM: '_fan',
+    _FAN: '_fan',
     _FROST_FORM: '_frost',
+    _FROST: '_frost',
     _HEAT_FORM: '_heat',
+    _HEAT: '_heat',
     _MOW_FORM: '_mow',
+    _MOW: '_mow',
     _WASH_FORM: '_wash',
+    _WASH: '_wash',
     _DAWN_WINGS_FORM: '_dawn_wings',
+    _DAWN_WINGS: '_dawn_wings',
     _DUSK_MANE_FORM: '_dusk_mane',
+    _DUSK_MANE: '_dusk_mane',
     _ULTRA_FORM: '_ultra',
+    _UNBOUND_FORM: '_unbound',
+    _UNBOUND: '_unbound',
+    _CONFINED_FORM: '',
+    _SKY_FORM: '_sky',
+    _LAND_FORM: '_land',
+    _STANDARD_FORM: '',
+    _ZEN_FORM: '_zen',
+    _GALARIAN_STANDARD_FORM: '_galarian_standard',
+    _GALARIAN_ZEN_FORM: '_galarian_zen',
+    _DUSK_FORM: '_dusk',
+    _MIDNIGHT_FORM: '_midnight',
+    _MIDDAY_FORM: '_midday',
     _CROWNED_SWORD_FORM: '_crowned_sword',
+    _CROWNED_SWORD: '_crowned_sword',
     _CROWNED_SHIELD_FORM: '_crowned_shield',
+    _CROWNED_SHIELD: '_crowned_shield',
     _HERO_FORM: '_hero',
     _COMPLETE_FORM: '_complete',
     _10_FORM: '_10',
     _50_FORM: '_50',
     _COMPLETE: '_complete',
+    _ETERNAMAX_FORM: '_eternamax',
     _ETERNAMAX: '_eternamax',
+    _GIGANTAMAX_FORM: '_gigantamax',
     _GIGANTAMAX: '_gigantamax',
     _RAPID_STRIKE_FORM: '_rapid_strike',
+    _RAPID_STRIKE: '_rapid_strike',
     _SINGLE_STRIKE_FORM: '_single_strike',
+    _SINGLE_STRIKE: '_single_strike',
     _SHADOW: '', // already stripped
   };
 
   let formSuffix = '';
-  for (const [pbSuffix, ourSuffix] of Object.entries(formMap)) {
+  for (const [pbSuffix, ourSuffix] of Object.entries(formMap).sort((a, b) => b[0].length - a[0].length)) {
     if (s.endsWith(pbSuffix)) {
       s = s.slice(0, -pbSuffix.length);
       formSuffix = ourSuffix; // already lowercase with leading _
@@ -150,6 +182,41 @@ export function pbIdToSpeciesId(pbId: string): string {
   if (overrides[out]) return overrides[out];
 
   return out;
+}
+
+/**
+ * Resolve a mapped speciesId against the loaded Game Master / PvPoke `byId` map
+ * so minor form-naming differences (e.g. `landorus` vs `landorus_incarnate`) never drop valid attackers.
+ */
+export function resolveExternalSpeciesId(
+  mappedSid: string,
+  knownById?: ReadonlyMap<string, unknown> | null,
+): string {
+  if (!mappedSid || !knownById || knownById.size === 0) return mappedSid;
+  if (knownById.has(mappedSid)) return mappedSid;
+
+  const isShadow = mappedSid.endsWith('_shadow');
+  const isPurified = mappedSid.endsWith('_purified');
+  const suffix = isShadow ? '_shadow' : isPurified ? '_purified' : '';
+  const base = suffix ? mappedSid.slice(0, -suffix.length) : mappedSid;
+
+  const candidates = [
+    `${base}_incarnate${suffix}`,
+    `${base}_altered${suffix}`,
+    `${base}_standard${suffix}`,
+    `${base}_land${suffix}`,
+    `${base}_aria${suffix}`,
+    `${base}_ordinary${suffix}`,
+    `${base}_normal${suffix}`,
+    `${base}_50${suffix}`,
+    `${base}_hero${suffix}`,
+  ];
+  for (const cand of candidates) {
+    if (knownById.has(cand)) return cand;
+  }
+  const stripped = base.replace(/_(incarnate|altered|standard|land|aria|ordinary|normal)$/, '') + suffix;
+  if (knownById.has(stripped)) return stripped;
+  return mappedSid;
 }
 
 function typeParam(t: string): string {
@@ -269,6 +336,7 @@ export async function loadPokebattlerTypeRankings(
  */
 export function applyExternalRaidRankings(
   target: {
+    byId?: ReadonlyMap<string, unknown>;
     raidRankings: Map<string, [string, number][]>;
     raidPos: Map<string, Map<string, [number, number]>>;
     raidScoreSource?: string;
@@ -282,11 +350,20 @@ export function applyExternalRaidRankings(
   for (const [t, lst] of external.entries()) {
     if (!lst.length) continue;
 
+    // Resolve species IDs against loaded Game Master when available, keeping highest score on alias collisions.
+    const dedup = new Map<string, number>();
+    for (const [rawSid, sc] of lst) {
+      const sid = resolveExternalSpeciesId(rawSid, target.byId);
+      const prev = dedup.get(sid) ?? 0;
+      if (sc > prev) dedup.set(sid, sc);
+    }
+    const resolved = Array.from(dedup.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
     // Full PB score list (points already sorted high → low)
-    target.raidRankings.set(t, lst.map(([sid, sc]) => [sid, sc]));
+    target.raidRankings.set(t, resolved);
 
     const pos = new Map<string, [number, number]>();
-    lst.forEach(([sid, sc], i) => pos.set(sid, [i + 1, sc]));
+    resolved.forEach(([sid, sc], i) => pos.set(sid, [i + 1, sc]));
     target.raidPos.set(t, pos);
     target.raidTypeSource?.set(t, 'pokebattler');
     applied++;

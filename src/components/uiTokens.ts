@@ -70,7 +70,10 @@ export const VERDICT_COLORS: Record<VerdictType, string> = {
 
 export const STATUS_COLORS: Record<BuildStatus, string> = {
   Ready: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+  'Usable (not optimal)': 'bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/30',
   'Needs TM': 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30',
+  'Needs power-up': 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/30',
+  'Needs evolution': 'bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30',
   'Needs second charged move': 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30',
   'Needs Elite TM': 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
   Unknown: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
@@ -78,8 +81,11 @@ export const STATUS_COLORS: Record<BuildStatus, string> = {
 
 export const STATUS_ORDER: BuildStatus[] = [
   'Ready',
+  'Usable (not optimal)',
+  'Needs power-up',
   'Needs TM',
   'Needs second charged move',
+  'Needs evolution',
   'Needs Elite TM',
   'Unknown',
 ];

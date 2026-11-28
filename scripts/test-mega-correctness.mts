@@ -159,11 +159,11 @@ const slotMegas = (rep: any) => rep.raid_teams.filter((t: any) => t.mega).map((t
   const hounds = raw.pokemons.filter((p: any) => Number(p.pokemonId) === 229);
   check(hounds.length >= 1, `fixture has a Houndoom (${hounds.length})`);
   const none = run(JSON.parse(JSON.stringify(raw)));
-  check(!slotMegas(none).some((s) => /Houndoom/.test(s)), 'ordinary Houndoom (nothing unlocked) is not in any Mega slot');
+  check(!slotMegas(none).some((s: string) => /Houndoom/.test(s)), 'ordinary Houndoom (nothing unlocked) is not in any Mega slot');
   hounds[0].megaEvolvedForms = [1]; hounds[0].hasMegaEvolved = true;
   const some = run(JSON.parse(JSON.stringify(raw)));
   console.log('   with Houndoom unlocked, Mega slots:', slotMegas(some).join(', ') || '(none)');
-  check(slotMegas(some).some((s) => /Houndoom/.test(s)), 'the same Houndoom, once unlocked, DOES take a Mega Houndoom slot');
+  check(slotMegas(some).some((s: string) => /Houndoom/.test(s)), 'the same Houndoom, once unlocked, DOES take a Mega Houndoom slot');
 }
 // 4. Pre-evolution only is never "owned"
 {
@@ -196,14 +196,14 @@ const slotMegas = (rep: any) => rep.raid_teams.filter((t: any) => t.mega).map((t
   };
   const rep = run(raw, withX());
   console.log('   Charizard with only Mega X unlocked, Mega slots:', slotMegas(rep).join(', ') || '(none)');
-  check(slotMegas(rep).some((s) => /Charizard X/.test(s)), 'it takes a Mega Charizard X slot');
-  check(!slotMegas(rep).some((s) => /Charizard Y/.test(s)), 'and is never placed as Mega Charizard Y');
+  check(slotMegas(rep).some((s: string) => /Charizard X/.test(s)), 'it takes a Mega Charizard X slot');
+  check(!slotMegas(rep).some((s: string) => /Charizard Y/.test(s)), 'and is never placed as Mega Charizard Y');
   // and when BOTH are unlocked, Y becomes possible
   const raw2 = JSON.parse(JSON.stringify(base));
   const z2 = raw2.pokemons.find((p: any) => String(p.id) === String(keeper.id).split(':')[1]);
   z2.megaEvolvedForms = [3, 2]; z2.hasMegaEvolved = true;
   const rep2 = run(raw2, withX());
-  check(slotMegas(rep2).some((s) => /Charizard/.test(s)), 'with both forms unlocked a Mega Charizard slot is filled');
+  check(slotMegas(rep2).some((s: string) => /Charizard/.test(s)), 'with both forms unlocked a Mega Charizard slot is filled');
 }
 // 6. Forms the game data does not list are ignored everywhere
 {

@@ -1,7 +1,9 @@
 import { buildRowCosts } from './costTables';
+import { CPM } from './cpmTable';
 import { maxWeightAssignment } from './assignment';
 import { costBundleFor, familyKeysFor } from './investmentCost';
-import { allocateQueue, buildLedger, summarizeLedger, type AllocationResult, type CostBundle, type Ledger } from './resourceLedger';
+import { buildRoleInvestmentAdvisor, computeValueBasedPriority, scarcityWeightedCost } from './investmentAdvisor';
+import { allocateQueue, buildLedger, emptyCost, summarizeLedger, type AllocationResult, type CostBundle, type Ledger } from './resourceLedger';
 import { assessMegaForm, isDisposedVerdict, megaBaseSid, MEGA_INVEST_ORDER, MEGA_STATUS_LABEL, type MegaStatus } from './megaStatus';
 import {
   BASE_CUPS,
@@ -70,6 +72,7 @@ import {
 } from './accountHub';
 import { buildCuratedMegaStatus, type CuratedMegaTypeRow } from './megaCurated';
 import {
+  allEliteMoveIds,
   canJoinMaxBattle,
   currentMoves,
   Dex,
@@ -642,6 +645,7 @@ export function buildRaidTeams(
   cfg: PogoConfig,
   bag?: BagResources | null,
   takenUids: ReadonlySet<string> = new Set(),
+  ledger?: Ledger,
 ): RaidTeamTypeBlock[] {
   const teamSize = Number(cfg.raid.keep_per_type ?? 6);
   const backupSize = Number(cfg.raid.reserve_keep ?? 2);
@@ -679,6 +683,7 @@ export function buildRaidTeams(
     source: 'pokebattler' | 'internal';
     pct: number;
     primary: boolean;
+    speciesPbPoints: number;
   }
   interface TypeCtx {
     atype: string;
@@ -711,17 +716,15 @@ export function buildRaidTeams(
         const a = assessRaidMon({ mon: m, species: sp, dex, cfg, teamType: atype, tmBag });
         if (!a || a.dps <= 0) continue;
 
-        // Moveset quality vs PB "best moveset" assumption.
-        let movesetFactor = 1.0;
-        if (a.status === 'ready') movesetFactor = a.basis === 'current' ? 1.0 : 0.97;
-        else if (a.status === 'needs_tm') movesetFactor = a.tmInBag ? 0.88 : 0.72;
-        else if (a.status === 'blocked') movesetFactor = 0.35;
-        else movesetFactor = 0.6;
+        // Real moveset DPS scaling: ratio of assessed moveset DPS to species' best attainable L40 moveset DPS
+        // (replaces the coarse 1.0/0.97/0.88/0.72/0.35 heuristic).
+        const movesetRatio =
+          a.pbMovesetDps > 0 ? Math.max(0.05, Math.min(1.05, a.dps / a.pbMovesetDps)) : 1.0;
 
         let score: number;
         if (usePb) {
-          // Pokébattler points for this species, scaled to this specimen (real CPM table, real Attack stat).
-          score = specimenPbScore(hit[1], m.level, m.a, sp.baseStats.atk, movesetFactor);
+          // Pokébattler points for this species, scaled by real CPM, real ATK IV, and real moveset DPS ratio.
+          score = specimenPbScore(hit[1], m.level, m.a, sp.baseStats.atk, movesetRatio);
         } else {
           // Internal formula: rank by the real DPS of the moves it has (or would have), exactly as displayed.
           score = a.dps;
@@ -736,6 +739,7 @@ export function buildRaidTeams(
           source: usePb ? 'pokebattler' : 'internal',
           pct: (100 * score) / (ref || 1),
           primary: m.raid_type === atype,
+          speciesPbPoints: usePb ? hit[1] : 0,
         };
         if (
           !best ||
@@ -849,6 +853,235 @@ export function buildRaidTeams(
   }
 
   // ======================================================================
+  // PASS 4 (View B) - Resource-limited "After Investment" simulation using allocateQueue
+  // ======================================================================
+  const effectiveLedger: Ledger | null =
+    ledger ??
+    (bag
+      ? {
+          stardust: { state: 'known', value: bag.stardust, basis: 'listed' },
+          rare_candy: { state: 'known', value: bag.rare_candy, basis: 'listed' },
+          rare_candy_xl: { state: 'known', value: bag.rare_candy_xl, basis: 'listed' },
+          fast_tm: { state: 'known', value: bag.fast_tms, basis: 'listed' },
+          charged_tm: { state: 'known', value: bag.charged_tms, basis: 'listed' },
+          elite_fast_tm: { state: 'known', value: bag.elite_fast_tms, basis: 'listed' },
+          elite_charged_tm: { state: 'known', value: bag.elite_charged_tms, basis: 'listed' },
+          max_particles: { state: 'known', value: bag.mp, basis: 'listed' },
+          species_candy: { state: 'unknown', reason: 'not in export' },
+          species_xl_candy: { state: 'unknown', reason: 'not in export' },
+          mega_energy: { state: 'unknown', reason: 'not in export' },
+          items: {},
+        }
+      : null);
+
+  interface ViewBProposal {
+    id: string;
+    atype: string;
+    isMega?: boolean;
+    megaCand?: MegaTeamCandidate;
+    cand?: AttackerCand;
+    upgradedDps: number;
+    upgradedScore: number;
+    upgradedLevel: number;
+    appliedSteps: string[];
+    cost: CostBundle;
+    familyKeys: string[];
+    valuePerCost: number;
+  }
+
+  const proposalsByUid = new Map<string, ViewBProposal>();
+  const pveTargetLv = Math.max(teamMinLevel, Number(cfg.raid?.power_level ?? 30));
+
+  for (const ctx of ctxs) {
+    const floorScore = teamFloorScore.get(ctx.atype) ?? 0;
+    const usePb = typeUsesPb(ctx.atype);
+    const inv = !ctx.megaCand ? megaInvestByType.get(ctx.atype) : undefined;
+    if (inv) {
+      const m = inv.mon;
+      const targetLv = Math.max(m.level, teamMinLevel);
+      const evoSid = inv.status === 'NEEDS_EVOLVE' ? megaBaseSid(inv.megaSid) : null;
+      const rowCost = buildRowCosts(
+        { ...m, evolve_to_sid: evoSid, power_up_to: targetLv > m.level ? targetLv : null },
+        dex.byId,
+      );
+      const cost: CostBundle = {
+        ...emptyCost(),
+        stardust: rowCost.dust,
+        species_candy: 0,
+        species_xl_candy: 0,
+        mega_energy: inv.status === 'NEEDS_EVOLVE' || inv.status === 'NEEDS_FIRST_MEGA' ? 200 : null,
+      };
+      const steps: string[] = [];
+      if (evoSid) steps.push(`Evolve → ${spName(dex, evoSid)}`);
+      steps.push(`First Mega Evolution → ${inv.name}`);
+      if (targetLv > m.level + 0.1) steps.push(`Power up → L${targetLv}`);
+      const gain = inv.dps;
+      const vpc = gain / scarcityWeightedCost(cost, effectiveLedger ?? undefined);
+      const prev = proposalsByUid.get(m.uid);
+      if (!prev || vpc > prev.valuePerCost) {
+        proposalsByUid.set(m.uid, {
+          id: m.uid,
+          atype: ctx.atype,
+          isMega: true,
+          megaCand: inv,
+          upgradedDps: inv.dps,
+          upgradedScore: inv.dps,
+          upgradedLevel: targetLv,
+          appliedSteps: steps,
+          cost,
+          familyKeys: familyKeysFor(m, dex),
+          valuePerCost: vpc,
+        });
+      }
+    }
+
+    for (const c of ctx.cands) {
+      const m = c.mon;
+      const needsFix = c.a.status !== 'ready' || c.a.evolveFirst || m.level < teamMinLevel;
+      const optionalChTm =
+        c.a.status === 'ready' &&
+        !c.a.evolveFirst &&
+        c.a.afterRegularTmDps > c.a.dps * 1.05;
+      if (!needsFix && !optionalChTm) continue;
+
+      const sp = dex.byId.get(c.sid) || m.species!;
+      // Keep TM-only fixes free of unknown-candy level-ups so finite TM bag allocation resolves deterministically.
+      const tmOnlyFix = (c.a.status === 'needs_tm' && !c.a.evolveFirst) || optionalChTm;
+      const targetLv = !tmOnlyFix && m.level < teamMinLevel ? pveTargetLv : m.level;
+      const rowCost = buildRowCosts(
+        {
+          ...m,
+          evolve_to_sid: c.a.evolveFirst ? c.sid : null,
+          power_up_to: targetLv > m.level ? targetLv : null,
+        },
+        dex.byId,
+      );
+      const needFastTm = c.a.status === 'needs_tm' && c.a.needsFastTm ? 1 : 0;
+      const needChTm =
+        (c.a.status === 'needs_tm' && c.a.needsChargedTm) || optionalChTm ? 1 : 0;
+      const needEFast = c.a.needsEliteFastTm ? 1 : 0;
+      const needECh = c.a.needsEliteChargedTm ? 1 : 0;
+      const cost: CostBundle = {
+        ...emptyCost(),
+        stardust: rowCost.dust,
+        species_candy: 0,
+        species_xl_candy: 0,
+        fast_tm: needFastTm,
+        charged_tm: needChTm,
+        elite_fast_tm: needEFast,
+        elite_charged_tm: needECh,
+        hard_blockers: c.a.blocker === 'frustration' ? ['Knows Frustration'] : [],
+      };
+
+      const targetDps =
+        optionalChTm
+          ? c.a.afterRegularTmDps
+          : c.a.dps;
+      const lvlRatio = targetLv > m.level ? (CPM[targetLv] ?? CPM[30]) / (CPM[Math.round(m.level * 2) / 2] ?? CPM[20]) : 1;
+      const movesRatio = c.a.pbMovesetDps > 0 ? Math.max(0.05, Math.min(1.05, targetDps / c.a.pbMovesetDps)) : 1;
+      const upgradedScore = usePb
+        ? specimenPbScore(c.speciesPbPoints, targetLv, m.a, sp.baseStats.atk, movesRatio)
+        : targetDps * lvlRatio;
+
+      if (upgradedScore <= floorScore && m.level >= teamMinLevel && c.a.status === 'ready') continue;
+      const steps: string[] = [];
+      if (c.a.evolveFirst) steps.push(`Evolve → ${spName(dex, c.sid)}`);
+      if (targetLv > m.level + 0.1) steps.push(`Power up L${Math.round(m.level * 10) / 10} → L${targetLv}`);
+      if (optionalChTm) steps.push(`Charged TM upgrade (+${Math.round((100 * (targetDps - c.a.dps)) / Math.max(1, c.a.dps))}%)`);
+      else if (c.a.tmActions.length > 0 && !c.a.evolveFirst) steps.push(...c.a.tmActions);
+
+      const gain = Math.max(0, upgradedScore - floorScore) + (c.primary ? 5 : 0);
+      const vpc = gain / scarcityWeightedCost(cost, effectiveLedger ?? undefined);
+      const prev = proposalsByUid.get(m.uid);
+      if (!prev || vpc > prev.valuePerCost) {
+        proposalsByUid.set(m.uid, {
+          id: m.uid,
+          atype: ctx.atype,
+          cand: c,
+          upgradedDps: Math.round(targetDps * 100) / 100,
+          upgradedScore,
+          upgradedLevel: targetLv,
+          appliedSteps: steps,
+          cost,
+          familyKeys: familyKeysFor(m, dex),
+          valuePerCost: vpc,
+        });
+      }
+    }
+  }
+
+  const sortedProposals = Array.from(proposalsByUid.values()).sort((a, b) => b.valuePerCost - a.valuePerCost);
+  const allocResultById = new Map<string, AllocationResult>();
+  if (effectiveLedger && sortedProposals.length > 0) {
+    const allocs = allocateQueue(
+      sortedProposals.map((p) => ({ id: p.id, cost: p.cost, familyKeys: p.familyKeys })),
+      effectiveLedger,
+    );
+    sortedProposals.forEach((p, idx) => allocResultById.set(p.id, allocs[idx]));
+  }
+
+  // Build View B placement per type using upgraded stats for READY proposals
+  const viewBMegaByType = new Map(megaByType);
+  for (const p of sortedProposals) {
+    if (p.isMega && p.megaCand && allocResultById.get(p.id)?.status === 'READY') {
+      viewBMegaByType.set(p.atype, p.megaCand);
+    }
+  }
+  const viewBMegaUids = new Set(Array.from(viewBMegaByType.values()).map((c) => c.mon.uid));
+  const viewBTaken = new Set<string>(viewBMegaUids);
+  const viewBEntriesByType = new Map<string, AttackerCand[]>(ctxs.map((c) => [c.atype, []]));
+  const viewBSpeciesCount = new Map<string, Map<string, number>>();
+  for (const t of RAID_USEFUL_TYPES) viewBSpeciesCount.set(t, new Map());
+
+  const viewBPairs: { atype: string; c: AttackerCand; applied: string[]; invStatus: 'ALREADY_READY' | 'READY'; effLv: number }[] = [];
+  for (const ctx of ctxs) {
+    for (const c of ctx.cands) {
+      if (viewBMegaUids.has(c.mon.uid)) continue;
+      const alloc = allocResultById.get(c.mon.uid);
+      const prop = proposalsByUid.get(c.mon.uid);
+      const isUpgraded = alloc?.status === 'READY' && prop && prop.atype === ctx.atype;
+      const readyNow = c.a.status === 'ready' && !c.a.evolveFirst;
+      if (!readyNow && !isUpgraded) continue;
+
+      const effLv = isUpgraded ? prop.upgradedLevel : c.mon.level;
+      const effCand: AttackerCand = isUpgraded
+        ? {
+            ...c,
+            score: prop.upgradedScore,
+            pct: (100 * prop.upgradedScore) / (ctx.ref || 1),
+            a: { ...c.a, status: 'ready', statusLabel: 'Ready (after bag fix)', dps: prop.upgradedDps, tmActions: [] },
+          }
+        : c;
+      viewBPairs.push({
+        atype: ctx.atype,
+        c: effCand,
+        applied: isUpgraded ? prop.appliedSteps : [],
+        invStatus: isUpgraded ? 'READY' : 'ALREADY_READY',
+        effLv,
+      });
+    }
+  }
+  viewBPairs.sort((x, y) => y.c.pct - x.c.pct || y.c.a.dps - x.c.a.dps || y.c.mon.iv_pct - x.c.mon.iv_pct);
+  const viewBMetaByUid = new Map<string, { applied: string[]; invStatus: 'ALREADY_READY' | 'READY'; effLv: number }>();
+  for (const item of viewBPairs) {
+    const ctx = ctxOf.get(item.atype)!;
+    const megaLocked = viewBMegaByType.has(item.atype);
+    const maxSlots = teamSize + backupSize - (megaLocked ? 1 : 0);
+    const mainCap = teamSize - (megaLocked ? 1 : 0);
+    const list = viewBEntriesByType.get(item.atype)!;
+    if (viewBTaken.has(item.c.mon.uid) || list.length >= maxSlots) continue;
+    const spMap = viewBSpeciesCount.get(item.atype)!;
+    const sk = speciesKey(item.c.sid);
+    if ((spMap.get(sk) || 0) >= maxSameSpecies) continue;
+    if (list.length >= mainCap && item.c.pct < spareFloor) continue;
+    viewBTaken.add(item.c.mon.uid);
+    list.push(item.c);
+    viewBMetaByUid.set(item.c.mon.uid, { applied: item.applied, invStatus: item.invStatus, effLv: item.effLv });
+    spMap.set(sk, (spMap.get(sk) || 0) + 1);
+  }
+  for (const ctx of ctxs) viewBEntriesByType.get(ctx.atype)!.sort(byCombat);
+
+  // ======================================================================
   // Build the output for each type
   // ======================================================================
   return ctxs.map((ctx) => {
@@ -931,6 +1164,13 @@ export function buildRaidTeams(
         dps_moveset: a?.moveset,
         dps_basis: a?.basis,
         upgrade_hint: a?.upgradeHint || undefined,
+        current_dps: a?.currentDps,
+        best_attainable_dps: a?.bestAttainableDps,
+        after_regular_tm_dps: a?.afterRegularTmDps,
+        after_elite_tm_dps: a?.afterEliteTmDps,
+        fast_tm_worthwhile: a?.fastTmWorthwhile,
+        charged_tm_optional: a?.chargedTmOptional,
+        evolve_first: a?.evolveFirst,
       });
     }
 
@@ -947,6 +1187,84 @@ export function buildRaidTeams(
     const stuck = fixList.filter((c) => c.a.status === 'blocked').sort(byCombat).slice(0, 4);
     const fixQueue = [...fixable, ...stuck].map((c) => raidEntryFrom(c, 'backup', 0, dex));
 
+    // View B output for this type
+    const viewBMegaCand = viewBMegaByType.get(atype) ?? null;
+    const viewBMega = viewBMegaCand
+      ? {
+          id: viewBMegaCand.mon.uid,
+          name: viewBMegaCand.name,
+          cp: viewBMegaCand.cp,
+          iv: viewBMegaCand.iv,
+          dps: Math.round(viewBMegaCand.dps * 100) / 100,
+          active: viewBMegaCand.active,
+          from: viewBMegaCand.from,
+        }
+      : null;
+    const viewBEntries: RaidTeamEntry[] = [];
+    if (viewBMega) {
+      viewBEntries.push({
+        ...(entries.find((e) => e.id === viewBMega.id) || {
+          id: viewBMega.id,
+          slot: 'team',
+          slot_num: 1,
+          is_mega: true,
+          name: viewBMega.name,
+          cp: viewBMega.cp,
+          iv: viewBMega.iv,
+          dps: viewBMega.dps,
+          level: Math.round((viewBMegaCand?.mon.level ?? 20) * 10) / 10,
+          shadow: false,
+          moveset: '—',
+          moveset_suggested: '—',
+          moveset_note: '',
+          verdict: viewBMegaCand?.mon.verdict ?? 'BUILD_MEGA',
+          from: viewBMega.from,
+          evolve_to: '',
+        }),
+        slot: 'team',
+        slot_num: 1,
+        is_mega: true,
+        investment_status: viewBMegaCand && megaByType.get(atype)?.mon.uid === viewBMega.id ? 'ALREADY_READY' : 'READY',
+        investment_applied:
+          viewBMegaCand && megaByType.get(atype)?.mon.uid !== viewBMega.id
+            ? proposalsByUid.get(viewBMega.id)?.appliedSteps
+            : undefined,
+      });
+    }
+    const vbPlaced = viewBEntriesByType.get(atype)!;
+    let upgradesApplied = viewBMega && megaByType.get(atype)?.mon.uid !== viewBMega.id ? 1 : 0;
+    for (const c of vbPlaced) {
+      const slotNum = viewBEntries.length + 1;
+      const entry = raidEntryFrom(c, slotNum <= teamSize ? 'team' : 'backup', slotNum, dex);
+      const meta = viewBMetaByUid.get(c.mon.uid);
+      if (meta) {
+        entry.level = Math.round(meta.effLv * 10) / 10;
+        entry.investment_status = meta.invStatus;
+        if (meta.applied.length > 0) {
+          entry.investment_applied = meta.applied;
+          upgradesApplied++;
+        }
+      }
+      viewBEntries.push(entry);
+    }
+    const vbMainDps = viewBEntries.filter((e) => e.slot === 'team').map((e) => e.dps);
+    const vbAvgDps = vbMainDps.length
+      ? Math.round((vbMainDps.reduce((s, v) => s + v, 0) / vbMainDps.length) * 10) / 10
+      : 0;
+    const checkCands = sortedProposals
+      .filter((p) => p.atype === atype && allocResultById.get(p.id)?.status === 'CHECK')
+      .slice(0, 4)
+      .map((p) => {
+        const res = allocResultById.get(p.id)!;
+        const unknownNames = res.lines.filter((l) => l.status === 'unknown').map((l) => l.label);
+        return {
+          id: p.id,
+          name: p.isMega ? p.megaCand!.name : displaySpecies(p.cand!.mon),
+          dps: p.upgradedDps,
+          reason: unknownNames.length ? `Verify ${unknownNames.join(', ')} in-game` : 'Check resource balance in-game',
+        };
+      });
+
     const buildSpots = buildBy.get(atype)!.length;
     return {
       type: atype,
@@ -958,6 +1276,13 @@ export function buildRaidTeams(
         ready: readyBy.get(atype)!.length,
         needs_tm: buildSpots + fixList.filter((c) => c.a.status === 'needs_tm').length,
         blocked: fixList.filter((c) => c.a.status === 'blocked').length,
+      },
+      after_investment: {
+        entries: viewBEntries,
+        mega: viewBMega,
+        avg_team_dps: vbAvgDps,
+        upgrades_applied: upgradesApplied,
+        check_candidates: checkCands,
       },
     };
   });
@@ -1023,6 +1348,13 @@ function raidEntryFrom(
     upgrade_hint: c.a.upgradeHint || undefined,
     fast_lock_note: c.a.fastLockNote,
     moves_note: c.a.movesNote,
+    current_dps: c.a.currentDps,
+    best_attainable_dps: c.a.bestAttainableDps,
+    after_regular_tm_dps: c.a.afterRegularTmDps,
+    after_elite_tm_dps: c.a.afterEliteTmDps,
+    fast_tm_worthwhile: c.a.fastTmWorthwhile,
+    charged_tm_optional: c.a.chargedTmOptional,
+    evolve_first: c.a.evolveFirst,
   };
 }
 
@@ -1553,11 +1885,10 @@ function ownerIndex(mons: MonModel[], dex: Dex) {
   for (const m of mons) {
     if (!m.species || m.verdict === 'TRANSFER' || m.verdict === 'TRADE') continue;
     const target = m.verdict === 'REVIEW' ? undecidedBySid : bySid;
-    for (const d of dex.descendants(m.species.speciesId)) {
-      const list = target.get(d) || [];
-      list.push(m);
-      target.set(d, list);
-    }
+    const sid = m.species.speciesId;
+    const list = target.get(sid) || [];
+    list.push(m);
+    target.set(sid, list);
   }
   return { bySid, undecidedBySid };
 }
@@ -1922,7 +2253,10 @@ export function computeGradeAndDetails(
   let compSum = 0;
   for (const b of pvpBuilds) {
     if (b.build_status === 'Ready') compSum += 1.0;
+    else if (b.build_status === 'Usable (not optimal)') compSum += 0.9;
+    else if (b.build_status === 'Needs power-up') compSum += 0.85;
     else if (b.build_status === 'Needs TM' || b.build_status === 'Needs second charged move') compSum += 0.8;
+    else if (b.build_status === 'Needs evolution') compSum += 0.65;
     else if (b.build_status === 'Needs Elite TM') compSum += 0.4;
     else compSum += 0.5;
   }
@@ -2060,6 +2394,7 @@ export function computeGradeAndDetails(
       team: rt?.entries || [],
       fix_queue: rt?.fix_queue || [],
       status_counts: rt?.status_counts,
+      after_investment: rt?.after_investment,
       mega: rt?.mega || null,
       mega_candidate: rt?.mega_candidate,
       best_dps: rw.best_have,
@@ -2233,50 +2568,8 @@ export function computeGradeAndDetails(
         }
       }
 
-      // Unified 1-100 Build Priority Score aligned with Pokémon GO meta, IV role & cost efficiency
-      let rawPriority = 45;
-      if (r.verdict === 'BUILD_RAID') {
-        const ty = r.raid_type || 'normal';
-        const ref = refDps(dex, dex.raidRankings, ty, true);
-        const raidPct = ref > 0 && m ? (100 * m.raid_dps) / ref : 60;
-        const baseDpsScore = 42 + (Math.min(105, Math.max(40, raidPct)) - 40) * 0.42;
-        const rk = m?.raid_rank ?? 99;
-        const rankBonus = rk <= 1 ? 10 : rk <= 3 ? 7 : rk <= 6 ? 4 : rk <= 10 ? 2 : 0;
-        const ivBonus = ((r.iv_pct - 60) / 40) * 6;
-        const typeMetaBonus = ((GRADE_TYPE_IMPORTANCE[ty] ?? 1.0) - 1.0) * 10;
-        const gapBonus = isGap ? 16 : 0;
-        rawPriority = baseDpsScore + rankBonus + ivBonus + typeMetaBonus + gapBonus;
-      } else if (r.verdict === 'BUILD_MEGA') {
-        const unlockBonus = !m?.has_mega_unlocked || r.evolve_to ? 5 : 0;
-        const gapBonus = isGap ? 16 : 0;
-        rawPriority = 62 + (r.iv_pct / 100) * 10 + unlockBonus + gapBonus;
-      } else if (r.verdict === 'BUILD_PVP') {
-        const bp = m?.best_pvp;
-        if (bp) {
-          const metaScore = Math.max(0.2, 1 - Math.log10(Math.max(1, bp.species_rank)) * 0.35);
-          const ivScore =
-            bp.cap >= 10000
-              ? Math.max(0.4, Math.min(1, 0.4 + ((r.iv_pct - 80) / 20) * 0.6))
-              : Math.max(0.1, 1 - Math.sqrt((Math.max(1, bp.iv_rank) - 1) / 4095));
-          rawPriority = 38 + metaScore * 28 + ivScore * 24;
-        } else {
-          rawPriority = 45 + (r.iv_pct / 100) * 20;
-        }
-      } else if (r.verdict === 'BUILD_MAX') {
-        const rk = m?.max_rank ?? 99;
-        const rankBonus = rk <= 1 ? 10 : rk <= 3 ? 6 : 2;
-        const gmaxBonus = m?.is_gigantamax ? 8 : 0;
-        rawPriority = 54 + rankBonus + gmaxBonus + (r.iv_pct / 100) * 8;
-      } else if (r.verdict === 'BUILD_GYM') {
-        rawPriority = 32 + (r.iv_pct / 100) * 14;
-      }
-
-      // Modest resource-efficiency nudge so quick high-value upgrades rise above 296-XL sinks
-      if (r.cost_xl === 0 && r.cost_dust <= 25000) rawPriority += 5;
-      else if (r.cost_xl === 0 && r.cost_dust <= 60000) rawPriority += 2;
-      else if (r.cost_xl >= 200 || r.cost_dust >= 300000) rawPriority -= 4;
-
-      const priorityScore = Math.round(Math.max(1, Math.min(99, rawPriority)));
+      // Value-based priority: marginal gain over current role floor divided by scarcity-weighted resource cost,
+      // with shared action merging (e.g. Mega + Raid, ML + Raid) and explicit advisor warnings.
       const formatTmTyped = (t: { name: string; slot: 'fast' | 'charged'; elite: boolean }) =>
         `${t.elite ? 'Elite ' : ''}${t.slot === 'fast' ? 'Fast' : 'Charged'} TM: ${t.name}`;
       const typedNeeds = r.needs_typed || [];
@@ -2291,7 +2584,7 @@ export function computeGradeAndDetails(
         power_up_to: r.power_up_to,
         evolve_to: r.evolve_to,
         gap_fix: isGap,
-        impact: priorityScore,
+        impact: 50,
         cost: { dust: r.cost_dust, candy: r.cost_candy, xl: r.cost_xl },
         moves: r.moves,
         tm_needed:
@@ -2306,8 +2599,26 @@ export function computeGradeAndDetails(
         why: [r.why, r.status_reason || ''].filter(Boolean),
         search: r.search,
       };
+      const bundle = costBundleFor(item, m, r, dex);
+      const evalPri = computeValueBasedPriority({
+        r,
+        mon: m,
+        bundle,
+        dex,
+        cfg: cfg!,
+        raidTeams,
+        maxTeams,
+        teams,
+        gapSet,
+        ledger,
+      });
+      item.impact = evalPri.impact;
+      item.shared_roles = evalPri.sharedRoles;
+      item.gain_pct = evalPri.marginalGainPct;
+      item.weakest_in_role = evalPri.weakestInRole;
+      item.advisor_messages = evalPri.advisorMessages;
+
       if (ledger) {
-        const bundle = costBundleFor(item, m, r, dex);
         const fams = familyKeysFor(m, dex);
         bundles.set(item.id, bundle);
         families.set(item.id, fams);
@@ -2422,7 +2733,7 @@ export function computeGradeAndDetails(
         atype,
         false,
       );
-      const eliteSet = new Set((targetSp.eliteMoves || []).map((e) => String(e).toUpperCase()));
+      const eliteSet = new Set(allEliteMoveIds(targetSp));
       const bestWith = cands[0]?.[0] ?? 0;
       const bestWithout =
         cands.find((c) => !eliteSet.has(c[1].toUpperCase()) && !eliteSet.has(c[2].toUpperCase()))?.[0] ?? 0;
@@ -2579,6 +2890,20 @@ export function computeGradeAndDetails(
     }
   }
 
+  const investmentAdvisor = buildRoleInvestmentAdvisor({
+    mons,
+    reportMons,
+    dex,
+    cfg: cfg!,
+    caps,
+    raidTeams,
+    maxTeams,
+    teams,
+    bagResources,
+    ledger,
+    levelThese,
+  });
+
   return {
     overall_pct: overall,
     letter: gradeLetter(overall),
@@ -2628,6 +2953,7 @@ export function computeGradeAndDetails(
       total: mons.length,
     },
     level_these: levelThese,
+    investment_advisor: investmentAdvisor,
     tm_here: {
       regular: regularTm,
       elite_worth: eliteWorth,
@@ -2922,6 +3248,8 @@ export function buildPriorityLists(
   stardust: number | null,
 ): { priority: ReportJson['priority']; evolve: EvolveItem[] } {
   const ml: PriorityEntry[] = [];
+  const gl: PriorityEntry[] = [];
+  const ul: PriorityEntry[] = [];
   const glul: PriorityEntry[] = [];
   const dn: PriorityEntry[] = [];
   const evolve: EvolveItem[] = [];
@@ -2982,7 +3310,13 @@ export function buildPriorityLists(
         needs_second_move: Boolean(r.needs_second_move) || r.build_status === 'Needs second charged move',
       };
       if (e.cap >= 10000) ml.push(entry);
-      else glul.push(entry);
+      else if (e.cap === 2500) {
+        ul.push(entry);
+        glul.push(entry);
+      } else {
+        gl.push(entry);
+        glul.push(entry);
+      }
     } else if (m.pvp.some((p) => !p.eligible && p.ineligible_reason)) {
       const bad = m.pvp.find((p) => !p.eligible && p.ineligible_reason)!;
       dn.push({
@@ -3007,6 +3341,8 @@ export function buildPriorityLists(
   }
 
   ml.sort((a, b) => a.combined - b.combined);
+  gl.sort((a, b) => a.combined - b.combined);
+  ul.sort((a, b) => a.combined - b.combined);
   glul.sort((a, b) => a.combined - b.combined);
   const spendFirst = [...ml, ...glul]
     .filter((x) => !stardust || x.dust <= stardust)
@@ -3016,6 +3352,8 @@ export function buildPriorityLists(
   return {
     priority: {
       ml: ml.slice(0, 40),
+      gl: gl.slice(0, 40),
+      ul: ul.slice(0, 40),
       glul: glul.slice(0, 40),
       dn: dn.slice(0, 30),
       spend_first: spendFirst,
@@ -3197,7 +3535,7 @@ export function buildFullReport(params: {
     let waitCdReason: string | undefined;
     if (m.evolve_to_sid && !isOutOfPlay(m)) {
       const targetSp = dex.byId.get(m.evolve_to_sid.replace(/_shadow$/, ''));
-      const eliteIds = new Set((targetSp?.eliteMoves || []).map((e) => String(e).toUpperCase()));
+      const eliteIds = new Set(allEliteMoveIds(targetSp));
       if (targetSp && eliteIds.size > 0) {
         const mvParts = (m.moveset || '')
           .split(' / ')
@@ -3391,7 +3729,7 @@ export function buildFullReport(params: {
   }
   for (const t of maxTeams) for (const e of t.entries) onOtherTeam.add(e.id);
   for (const m of mons) if (m.max_type && !m.max_reject) onOtherTeam.add(m.uid); // includes Max spares
-  const raidTeams = buildRaidTeams(mons, dex, cfg, bagResources, onOtherTeam);
+  const raidTeams = buildRaidTeams(mons, dex, cfg, bagResources, onOtherTeam, resourceLedger);
   const megaSection = buildMegaSection(mons, dex, auxMap);
   const maxBattleSupport = maxSupportPicks(mons, dex);
   const showcase = buildShowcase(mons, sizeCtx);

@@ -299,6 +299,7 @@ const RaidEntryNotes: React.FC<{ m: RaidTeamEntry }> = ({ m }) => {
 
 export const RaidTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
   const [filter, setFilter] = useState<'all' | 'attention'>('all');
+  const [viewMode, setViewMode] = useState<'now' | 'after_investment'>('now');
   const [showPlace, setShowPlace] = useState(false);
 
   const sections = report.grade?.sections?.raid || [];
@@ -314,15 +315,42 @@ export const RaidTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
             Raid Attacker Squads
           </h1>
           <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
-            Ranked by type-effective DPS (vs a defender weak to the team type) using the moves each Pokémon knows right now. Entries that need a TM, an Elite TM or a Frustration fix are labelled and listed under “Not ready yet”.
+            {viewMode === 'now'
+              ? 'View A (As they are now): ready-first, one team per Pokémon, ordered by DPS with optional TM fixes listed underneath.'
+              : 'View B (After affordable investments): simulated lineup after applying proven affordable TMs, evolutions, and power-ups from your bag queue.'}
           </p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-900">
+            <button
+              type="button"
+              onClick={() => setViewMode('now')}
+              className={`whitespace-nowrap shrink-0 rounded-md px-3 py-1 text-xs font-semibold transition ${
+                viewMode === 'now'
+                  ? 'bg-white text-slate-900 shadow-sm dark:bg-[#0F1B28] dark:text-slate-100'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+              }`}
+            >
+              View A: As Now
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('after_investment')}
+              className={`whitespace-nowrap shrink-0 rounded-md px-3 py-1 text-xs font-semibold transition ${
+                viewMode === 'after_investment'
+                  ? 'bg-white text-slate-900 shadow-sm dark:bg-[#0F1B28] dark:text-slate-100'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+              }`}
+            >
+              View B: After Investments
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={() => setFilter('all')}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
+            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap shrink-0 ${
               filter === 'all'
                 ? 'border-teal-500 bg-teal-500/12 text-teal-800 dark:text-teal-300'
                 : 'border-slate-200 bg-white text-slate-700 dark:border-slate-800 dark:bg-[#0F1B28] dark:text-slate-300'
@@ -333,7 +361,7 @@ export const RaidTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
           <button
             type="button"
             onClick={() => setFilter('attention')}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
+            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap shrink-0 ${
               filter === 'attention'
                 ? 'border-teal-500 bg-teal-500/12 text-teal-800 dark:text-teal-300'
                 : 'border-slate-200 bg-white text-slate-700 dark:border-slate-800 dark:bg-[#0F1B28] dark:text-slate-300'
@@ -368,7 +396,7 @@ export const RaidTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
                   >
                     {mv.name} ({mv.iv} · L{mv.level})
                   </button>
-                  <span className="font-mono text-slate-500">
+                  <span className="font-mono text-slate-500 tabular-nums">
                     {mv.from} → {mv.to} · {mv.why}
                   </span>
                 </div>
@@ -379,147 +407,233 @@ export const RaidTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
       )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {filtered.map((x) => (
-          <div
-            key={x.type}
-            className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span
-                  className="h-3 w-3 rounded-full"
-                  style={{ backgroundColor: TYPE_COLORS[x.type] || '#64748b' }}
-                />
-                <h2 className="text-base font-bold capitalize text-slate-900 dark:text-slate-100">
-                  {x.type}
-                </h2>
+        {filtered.map((x) => {
+          const isViewB = viewMode === 'after_investment' && Boolean(x.after_investment);
+          const displayEntries = isViewB ? x.after_investment!.entries : x.team;
+          const displayAvgDps = isViewB ? x.after_investment!.avg_team_dps : x.avg_team_dps;
+          const dpsDelta = isViewB ? Math.round((displayAvgDps - x.avg_team_dps) * 10) / 10 : 0;
+
+          return (
+            <div
+              key={x.type}
+              className="rounded-xl border border-slate-200/80 bg-white p-5 dark:border-slate-800/90 dark:bg-[#0F1B28]"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="h-3 w-3 rounded-full"
+                    style={{ backgroundColor: TYPE_COLORS[x.type] || '#64748b' }}
+                  />
+                  <h2 className="text-base font-bold capitalize text-slate-900 dark:text-slate-100">
+                    {x.type}
+                  </h2>
+                </div>
+                <div className="flex items-center gap-1.5 font-mono text-xs font-bold tabular-nums">
+                  <span
+                    className={
+                      x.status === 'OK'
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-amber-600 dark:text-amber-400'
+                    }
+                  >
+                    {x.status}
+                  </span>
+                  <span className="text-slate-300 dark:text-slate-700">·</span>
+                  <span className="text-slate-900 dark:text-slate-100">{x.letter}</span>
+                </div>
               </div>
-              <div className="flex items-center gap-1.5 font-mono text-xs font-bold">
-                <span
-                  className={
-                    x.status === 'OK'
-                      ? 'text-emerald-600 dark:text-emerald-400'
-                      : 'text-amber-600 dark:text-amber-400'
-                  }
-                >
-                  {x.status}
+
+              <div className="mt-1 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                <span>
+                  {isViewB
+                    ? `${x.after_investment!.upgrades_applied} upgrade${x.after_investment!.upgrades_applied === 1 ? '' : 's'} applied`
+                    : `${x.usable} L25+ in box (min 3) · ${x.strength_pct}% of ${x.top_species}`}
                 </span>
-                <span className="text-slate-300 dark:text-slate-700">·</span>
-                <span className="text-slate-900 dark:text-slate-100">{x.letter}</span>
+                <span className="font-mono font-semibold tabular-nums text-slate-700 dark:text-slate-300">
+                  Avg {displayAvgDps} dps
+                  {isViewB && dpsDelta > 0 && (
+                    <span className="ml-1 text-emerald-600 dark:text-emerald-400">(+{dpsDelta})</span>
+                  )}
+                </span>
               </div>
-            </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                <div
+                  className="h-full"
+                  style={{
+                    width: `${Math.min(100, x.strength_pct)}%`,
+                    backgroundColor: TYPE_COLORS[x.type] || '#0d9488',
+                  }}
+                />
+              </div>
 
-            <div className="mt-1 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-              <span>{x.usable} L25+ in box (min 3) · {x.strength_pct}% of {x.top_species}</span>
-              <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
-                Avg {x.avg_team_dps} dps
-              </span>
-            </div>
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-              <div
-                className="h-full"
-                style={{
-                  width: `${Math.min(100, x.strength_pct)}%`,
-                  backgroundColor: TYPE_COLORS[x.type] || '#0d9488',
-                }}
-              />
-            </div>
+              {(() => {
+                const activeTeam = displayEntries.filter((m) => m.slot === 'team');
+                const spares = displayEntries.filter((m) => m.slot === 'backup');
+                const hasMegaInTeam = activeTeam.some((m) => m.is_mega);
+                return (
+                  <>
+                    {!hasMegaInTeam && (
+                      <div className="mt-2.5 text-[11px] text-slate-400 dark:text-slate-500">
+                        {x.mega_candidate
+                          ? `No unlocked Mega/Primal for ${x.type}: 6 non-Mega attackers`
+                          : `No Mega/Primal owned for ${x.type}: 6 non-Mega attackers`}
+                      </div>
+                    )}
+                    {!hasMegaInTeam && x.mega_candidate && (
+                      <div className="mt-1 rounded-lg border border-dashed border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+                        <span className="font-semibold">Mega investment, not on the team:</span> {x.mega_candidate.name} (from your{' '}
+                        {x.mega_candidate.from}, {x.mega_candidate.iv}, CP {x.mega_candidate.cp}).{' '}
+                        <span className="font-semibold">{x.mega_candidate.status_label}.</span>{' '}
+                        {x.mega_candidate.needs.length > 0 && <>Needs: {x.mega_candidate.needs.join(', then ')}. </>}
+                        Mega Energy needed: unknown (not in your export).
+                      </div>
+                    )}
 
-            {(() => {
-              const activeTeam = x.team.filter((m) => m.slot === 'team');
-              const spares = x.team.filter((m) => m.slot === 'backup');
-              const hasMegaInTeam = activeTeam.some((m) => m.is_mega);
-              return (
-                <>
-                  {!hasMegaInTeam && (
-                    <div className="mt-2.5 text-[11px] text-slate-400 dark:text-slate-500">
-                      {x.mega_candidate
-                        ? `No unlocked Mega/Primal for ${x.type}: 6 non-Mega attackers`
-                        : `No Mega/Primal owned for ${x.type}: 6 non-Mega attackers`}
-                    </div>
-                  )}
-                  {!hasMegaInTeam && x.mega_candidate && (
-                    <div className="mt-1 rounded-lg border border-dashed border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5 text-[11px] text-slate-600 dark:text-slate-300">
-                      <span className="font-semibold">Mega investment, not on the team:</span> {x.mega_candidate.name} (from your{' '}
-                      {x.mega_candidate.from}, {x.mega_candidate.iv}, CP {x.mega_candidate.cp}).{' '}
-                      <span className="font-semibold">{x.mega_candidate.status_label}.</span>{' '}
-                      {x.mega_candidate.needs.length > 0 && <>Needs: {x.mega_candidate.needs.join(', then ')}. </>}
-                      Mega Energy needed: unknown (not in your export).
-                    </div>
-                  )}
-
-                  <div className="mt-3 divide-y divide-slate-100 border-t border-slate-100 pt-1 text-xs dark:divide-slate-800 dark:border-slate-800">
-                    {activeTeam.map((m, idx) => {
-                      const slotNum = m.slot_num ?? idx + 1;
-                      return (
-                        <div
-                          key={m.id}
-                          className={`flex items-center justify-between py-2 ${
-                            m.is_mega
-                              ? '-mx-2 rounded-lg bg-purple-500/8 px-2 dark:bg-purple-500/12'
-                              : ''
-                          }`}
-                        >
-                          <div className="min-w-0 pr-2">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span
-                                className={`font-mono text-[10px] font-bold ${
-                                  m.is_mega
-                                    ? 'text-purple-700 dark:text-purple-300'
-                                    : 'text-slate-400'
-                                }`}
-                              >
-                                #{slotNum}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => onInspectId(m.id)}
-                                className={`truncate text-left font-semibold hover:text-teal-600 dark:hover:text-teal-400 ${
-                                  m.is_mega
-                                    ? 'text-purple-900 dark:text-purple-100'
-                                    : 'text-slate-900 dark:text-slate-100'
-                                }`}
-                              >
-                                {m.name}
-                              </button>
-                              {m.is_mega && (
-                                <span className="rounded border border-purple-500/30 bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-purple-700 dark:text-purple-300">
-                                  Mega
+                    <div className="mt-3 divide-y divide-slate-100 border-t border-slate-100 pt-1 text-xs dark:divide-slate-800 dark:border-slate-800">
+                      {activeTeam.map((m, idx) => {
+                        const slotNum = m.slot_num ?? idx + 1;
+                        return (
+                          <div
+                            key={m.id}
+                            className={`flex items-center justify-between py-2 ${
+                              m.is_mega
+                                ? '-mx-2 rounded-lg bg-purple-500/8 px-2 dark:bg-purple-500/12'
+                                : ''
+                            }`}
+                          >
+                            <div className="min-w-0 pr-2">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span
+                                  className={`font-mono text-[10px] font-bold tabular-nums ${
+                                    m.is_mega
+                                      ? 'text-purple-700 dark:text-purple-300'
+                                      : 'text-slate-400'
+                                  }`}
+                                >
+                                  #{slotNum}
                                 </span>
+                                <button
+                                  type="button"
+                                  onClick={() => onInspectId(m.id)}
+                                  className={`truncate text-left font-semibold hover:text-teal-600 dark:hover:text-teal-400 ${
+                                    m.is_mega
+                                      ? 'text-purple-900 dark:text-purple-100'
+                                      : 'text-slate-900 dark:text-slate-100'
+                                  }`}
+                                >
+                                  {m.name}
+                                </button>
+                                {m.is_mega && (
+                                  <span className="text-[10px] font-bold uppercase tracking-wide text-purple-700 dark:text-purple-300">
+                                    · Mega
+                                  </span>
+                                )}
+                                {m.investment_status === 'READY' && (
+                                  <span className="text-[10px] font-semibold text-teal-700 dark:text-teal-300">
+                                    · Upgraded
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                <span className="font-mono font-semibold tabular-nums text-slate-700 dark:text-slate-300">
+                                  CP {formatNum(m.cp)}
+                                </span>{' '}
+                                · L{m.level} · IV {m.iv} · {m.moveset}
+                              </div>
+                              {!isViewB && m.current_dps !== undefined && m.best_attainable_dps !== undefined && m.best_attainable_dps > m.current_dps + 0.5 && (
+                                <div className="mt-0.5 font-mono text-[10px] tabular-nums text-slate-500">
+                                  Now {m.current_dps} · Reg TM {m.after_regular_tm_dps ?? m.dps} · Elite {m.after_elite_tm_dps ?? m.best_attainable_dps} dps
+                                </div>
+                              )}
+                              {isViewB && m.investment_applied && m.investment_applied.length > 0 && (
+                                <div className="mt-0.5 text-[11px] text-teal-700 dark:text-teal-300">
+                                  Applied: {m.investment_applied.join(' · ')}
+                                </div>
+                              )}
+                              {!isViewB && <RaidEntryNotes m={m} />}
+                            </div>
+                            <div className="shrink-0 text-right font-mono font-semibold tabular-nums text-slate-700 dark:text-slate-300">
+                              {m.dps} dps
+                              {!isViewB && m.dps_basis === 'after_tm' && (
+                                <div className="text-[10px] font-normal text-slate-400">after TM</div>
                               )}
                             </div>
-                            <div className="text-[11px] text-slate-500">
-                              <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">CP {formatNum(m.cp)}</span> · L{m.level} · IV {m.iv} · {m.moveset}
-                            </div>
-                            <RaidEntryNotes m={m} />
                           </div>
-                          <div className="shrink-0 text-right font-mono font-semibold text-slate-700 dark:text-slate-300">
-                            {m.dps} dps
-                            {m.dps_basis === 'after_tm' && (
-                              <div className="text-[10px] font-normal text-slate-400">after TM</div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {x.team.length === 0 && (
-                      <div className="py-3 text-xs text-slate-500">No raid attackers placed here yet.</div>
-                    )}
-                  </div>
+                        );
+                      })}
+                      {displayEntries.length === 0 && (
+                        <div className="py-3 text-xs text-slate-500">No raid attackers placed here yet.</div>
+                      )}
+                    </div>
 
-                  {spares.length > 0 && (
-                    <div className="mt-2 border-t border-dashed border-slate-200 pt-2 text-xs dark:border-slate-700/80">
-                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                        Spares ({spares.length})
+                    {spares.length > 0 && (
+                      <div className="mt-2 border-t border-dashed border-slate-200 pt-2 text-xs dark:border-slate-700/80">
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                          Spares ({spares.length})
+                        </div>
+                        <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                          {spares.map((m, idx) => (
+                            <div key={m.id} className="flex items-center justify-between py-1.5 opacity-90">
+                              <div className="min-w-0 pr-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono text-[10px] tabular-nums text-slate-400">
+                                    S{idx + 1}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => onInspectId(m.id)}
+                                    className="truncate text-left font-medium text-slate-700 hover:text-teal-600 dark:text-slate-300 dark:hover:text-teal-400"
+                                  >
+                                    {m.name}
+                                  </button>
+                                </div>
+                                <div className="text-[11px] text-slate-500">
+                                  <span className="font-mono font-medium tabular-nums text-slate-600 dark:text-slate-300">
+                                    CP {formatNum(m.cp)}
+                                  </span>{' '}
+                                  · L{m.level} · IV {m.iv} · {m.moveset}
+                                </div>
+                                {!isViewB && <RaidEntryNotes m={m} />}
+                              </div>
+                              <div className="shrink-0 text-right font-mono tabular-nums text-slate-600 dark:text-slate-400">
+                                {m.dps} dps
+                                {!isViewB && m.dps_basis === 'after_tm' && (
+                                  <div className="text-[10px] font-normal text-slate-400">after TM</div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                      <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                        {spares.map((m, idx) => (
-                          <div key={m.id} className="flex items-center justify-between py-1.5 opacity-90">
-                            <div className="min-w-0 pr-2">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-mono text-[10px] text-slate-400">
-                                  S{idx + 1}
-                                </span>
+                    )}
+
+                    {isViewB && (x.after_investment?.check_candidates?.length ?? 0) > 0 && (
+                      <div className="mt-2 border-t border-dashed border-amber-500/30 pt-2 text-[11px] text-amber-700 dark:text-amber-300">
+                        <div className="font-semibold">Check Candy / Energy in-game ({x.after_investment!.check_candidates.length}):</div>
+                        {x.after_investment!.check_candidates.map((chk) => (
+                          <div key={chk.id} className="mt-0.5 flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => onInspectId(chk.id)}
+                              className="truncate text-left font-medium hover:underline"
+                            >
+                              {chk.name} ({chk.dps} dps)
+                            </button>
+                            <span className="shrink-0 text-[10px]">{chk.reason}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {!isViewB && (x.fix_queue?.length ?? 0) > 0 && (
+                      <details className="mt-2 border-t border-dashed border-slate-200 pt-2 text-xs dark:border-slate-700/80">
+                        <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                          Could improve this team with a TM · on no other team ({x.fix_queue!.length})
+                        </summary>
+                        <div className="mt-1 divide-y divide-slate-100 dark:divide-slate-800/80">
+                          {x.fix_queue!.map((m) => (
+                            <div key={m.id} className="py-1.5">
+                              <div className="flex items-center justify-between gap-2">
                                 <button
                                   type="button"
                                   onClick={() => onInspectId(m.id)}
@@ -527,56 +641,23 @@ export const RaidTab: React.FC<BattleTabProps> = ({ report, onInspectId }) => {
                                 >
                                   {m.name}
                                 </button>
+                                <span className="shrink-0 font-mono tabular-nums text-slate-500">{m.dps} dps after fix</span>
                               </div>
                               <div className="text-[11px] text-slate-500">
-                                <span className="font-mono font-medium text-slate-600 dark:text-slate-300">CP {formatNum(m.cp)}</span> · L{m.level} · IV {m.iv} · {m.moveset}
+                                CP {formatNum(m.cp)} · L{m.level} · IV {m.iv} · {m.moveset}
                               </div>
                               <RaidEntryNotes m={m} />
                             </div>
-                            <div className="shrink-0 text-right font-mono text-slate-600 dark:text-slate-400">
-                              {m.dps} dps
-                              {m.dps_basis === 'after_tm' && (
-                                <div className="text-[10px] font-normal text-slate-400">after TM</div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {(x.fix_queue?.length ?? 0) > 0 && (
-                    <details className="mt-2 border-t border-dashed border-slate-200 pt-2 text-xs dark:border-slate-700/80">
-                      <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                        Could improve this team with a TM · on no other team ({x.fix_queue!.length})
-                      </summary>
-                      <div className="mt-1 divide-y divide-slate-100 dark:divide-slate-800/80">
-                        {x.fix_queue!.map((m) => (
-                          <div key={m.id} className="py-1.5">
-                            <div className="flex items-center justify-between gap-2">
-                              <button
-                                type="button"
-                                onClick={() => onInspectId(m.id)}
-                                className="truncate text-left font-medium text-slate-700 hover:text-teal-600 dark:text-slate-300 dark:hover:text-teal-400"
-                              >
-                                {m.name}
-                              </button>
-                              <span className="shrink-0 font-mono text-slate-500">{m.dps} dps after fix</span>
-                            </div>
-                            <div className="text-[11px] text-slate-500">
-                              CP {formatNum(m.cp)} · L{m.level} · IV {m.iv} · {m.moveset}
-                            </div>
-                            <RaidEntryNotes m={m} />
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  )}
-                </>
-              );
-            })()}
-          </div>
-        ))}
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

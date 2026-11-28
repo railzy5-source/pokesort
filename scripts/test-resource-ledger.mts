@@ -61,7 +61,7 @@ console.log('\nAffordability');
   r = assessAlone(cost({ species_xl_candy: 100 }), ledger({ species_xl_candy: { state: 'known', byFamily: { houndour: 0 } }, rare_candy_xl: K(500) }), fk('houndour'));
   check(r.status === 'NOT_AFFORDABLE', 'Rare Candy XL is NOT counted as species XL Candy by default');
   r = assessAlone(cost({ species_xl_candy: 100 }), ledger({ species_xl_candy: { state: 'known', byFamily: { houndour: 0 } }, rare_candy_xl: K(500) }), fk('houndour'), { allowRareCandy: true });
-  check(r.status === 'READY' && r.lines[0].note?.includes('covered by Rare Candy XL'), 'when the player opts in, Rare Candy XL covers the XL shortage and says so');
+  check(Boolean(r.status === 'READY' && r.lines[0].note?.includes('covered by Rare Candy XL')), 'when the player opts in, Rare Candy XL covers the XL shortage and says so');
   r = assessAlone(cost({ species_candy: 50 }), ledger({ species_candy: { state: 'known', byFamily: { houndour: 10 } }, rare_candy: K(20) }), fk('houndour'), { allowRareCandy: true });
   check(r.status === 'NOT_AFFORDABLE', 'opted-in Rare Candy that still falls short does not make it affordable (10 + 20 < 50)');
   r = assessAlone(cost({ species_candy: 50 }), ledger({ species_candy: { state: 'unknown', reason: 'x' } }), fk('houndour'));

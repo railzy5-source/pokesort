@@ -23,6 +23,7 @@ import {
   loadPokebattlerTypeRankings,
   type TypeRankingMap,
 } from './pokebattlerRankings';
+import { buildLedger } from './resourceLedger';
 import {
   createPveContext,
   createSizeContext,
@@ -176,7 +177,13 @@ export function analyzePgsExport(
   const raidPlace = assignTypes(mons, dex, cfg, 'raid', auxMap, holdsMaxSlot);
 
   onStage?.('Evaluating PvP leagues, IV ranks & quality gates…', 72);
-  classifyMons(mons, dex, cfg, caps, cups, auxMap);
+  const preLedger = buildLedger(parsed.rawData);
+  const pvpBag = {
+    eliteFast: preLedger.elite_fast_tm.state === 'known' ? preLedger.elite_fast_tm.value : undefined,
+    eliteCharged: preLedger.elite_charged_tm.state === 'known' ? preLedger.elite_charged_tm.value : undefined,
+  };
+  (cfg as any).battleParties = (parsed.rawData as any).battleParties ?? (parsed.rawData as any).playerPreferences?.battleParties;
+  classifyMons(mons, dex, cfg, caps, cups, auxMap, pvpBag);
   const covState = computeCoverageFirst(mons, dex, cfg);
 
   // B:3 — Compute exact purified CP preview using species base stats

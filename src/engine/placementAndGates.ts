@@ -24,8 +24,10 @@ import {
   ivStr,
 } from './pgsParser';
 import {
+  allEliteMoveIds,
   canJoinMaxBattle,
   currentMaxMoveType,
+  currentMoves,
   Dex,
   estimatedMaxDps,
   estimatedRaidDps,
@@ -35,6 +37,7 @@ import {
   refDps,
   spName,
 } from './pveModel';
+import { evaluatePvpBattleMatrix } from './battleSim';
 import type {
   CupDef,
   MonModel,
@@ -780,6 +783,7 @@ export function classifyMons(
   caps: number[],
   cups: Record<string, CupDef>,
   auxMap: Map<string, MonAux>,
+  pvpBag?: { eliteFast?: number; eliteCharged?: number },
 ): void {
   const protectIvPct = Number(cfg.protect_iv_pct ?? 92);
   const ivProtectMaxPerSp = Number(cfg.iv_protect_max_per_species ?? 2);
@@ -938,7 +942,36 @@ export function classifyMons(
           }
         }
 
-        const composite = Math.round((spRank + ivRankNum * 0.25) * 10) / 10;
+        const pvpMoveset = (capMetaMap?.get(targetPvpSid)?.moveset || []).slice(0, 3);
+        const eliteMoveSet = new Set(allEliteMoveIds(sp));
+        const fastSet = new Set((sp.fastMoves || []).map((x) => String(x).toUpperCase()));
+        const knownSet = dex.pve.ok
+          ? new Set(currentMoves(dex.pve, m).map((mv) => mv.name.toLowerCase()))
+          : new Set<string>();
+        let moveAdj = 0;
+        if (pvpMoveset.length > 0) {
+          let allKnown = dex.pve.ok && (pvpMoveset.length < 3 || m.has_third_move);
+          for (const mvId of pvpMoveset) {
+            const upId = String(mvId).toUpperCase();
+            const hasMove = knownSet.has(moveLabel(mvId).toLowerCase());
+            const isElite = eliteMoveSet.has(upId);
+            if (!hasMove) allKnown = false;
+            if (isElite) {
+              if (hasMove) moveAdj -= 3.5;
+              else {
+                const isFast = fastSet.has(upId);
+                const avail = isFast ? pvpBag?.eliteFast : pvpBag?.eliteCharged;
+                if (avail === 0) moveAdj += 5.5;
+              }
+            }
+          }
+          if (allKnown) moveAdj -= 2.0;
+        }
+        const needsEvo = d !== m.species.speciesId;
+        if (needsEvo) moveAdj += 1.0;
+        else if (targetCp > 0 && m.cp >= targetCp * 0.88) moveAdj -= 1.5;
+
+        const composite = Math.round((spRank + ivRankNum * 0.25 + moveAdj) * 10) / 10;
         const entry: PvpEntry = {
           cap,
           league: LEAGUE_NAMES[cap] || `${cap}`,
@@ -954,6 +987,7 @@ export function classifyMons(
           maybe_eligible: eligible,
           ineligible_reason: ineligibleReason,
           already_at_target: m.cp === targetCp && Math.abs(m.level - targetLv) < 0.1,
+          move_score_adj: Math.round(moveAdj * 10) / 10,
         };
 
         if (
@@ -1175,9 +1209,52 @@ export function classifyMons(
 
   allPvpCands.sort(comparePvpCandidates);
 
+  const simWinByCand = new Map<PvpCandidate, number>();
+  const candsBySidCap = new Map<string, PvpCandidate[]>();
+  for (const c of allPvpCands) {
+    const arr = candsBySidCap.get(c.sidCapKey) || [];
+    arr.push(c);
+    candsBySidCap.set(c.sidCapKey, arr);
+  }
+  // Use PvPoke battleSim where >=2 contenders compete closely for the same (species, cap)
+  for (const arr of candsBySidCap.values()) {
+    if (arr.length < 2) continue;
+    const head = arr[0];
+    if (head.entry.species_rank > 120) continue;
+    const close = arr.filter((c) => Math.abs(c.entry.composite - head.entry.composite) <= 8).slice(0, 3);
+    if (close.length < 2) continue;
+    for (const cand of close) {
+      const sp = dex.byId.get(cand.entry.sid.replace(/_shadow$/, '')) || dex.byId.get(cand.entry.sid) || cand.mon.species;
+      if (!sp) continue;
+      const simLv = cand.mon.level > cand.entry.target_level && cand.entry.cap < 10000 ? cand.mon.level : cand.entry.target_level;
+      const sim = evaluatePvpBattleMatrix(
+        sp,
+        cand.mon.a,
+        cand.mon.d,
+        cand.mon.s,
+        simLv,
+        cand.mon.is_shadow,
+        cand.entry.cup || cand.entry.cap,
+        cand.entry.cap,
+        cand.entry.league,
+        dex,
+        cand.entry.sid === cand.mon.species?.speciesId ? cand.mon : null,
+      );
+      if (sim) {
+        simWinByCand.set(cand, sim.win_rate_1v1);
+        cand.entry.composite = Math.round((cand.entry.composite + (50 - sim.win_rate_1v1) * 0.15) * 10) / 10;
+      }
+    }
+  }
+  allPvpCands.sort((a, b) => {
+    const cmp = comparePvpCandidates(a, b);
+    if (cmp !== 0) return cmp;
+    return (simWinByCand.get(b) ?? 50) - (simWinByCand.get(a) ?? 50);
+  });
+
   const assignedByUid = new Map<string, PvpCandidate>();
   const winnersBySidCap = new Map<string, PvpCandidate[]>();
-  const candsBySidCap = new Map<string, PvpCandidate[]>();
+  candsBySidCap.clear();
   for (const c of allPvpCands) {
     const arr = candsBySidCap.get(c.sidCapKey) || [];
     arr.push(c);
@@ -1317,7 +1394,25 @@ export function classifyMons(
   const mirrorTradeCountByDex = new Map<number, number>();
   const MIRROR_TRADE_CAP_PER_DEX = 5;
 
+  const savedBattlePartyUids = new Set<string>();
+  const bpObj = (cfg as any).battleParties ?? (cfg as any).playerPreferences?.battleParties;
+  if (bpObj && Array.isArray(bpObj.battleParties)) {
+    for (const bp of bpObj.battleParties) {
+      if (Array.isArray(bp.ids)) {
+        for (const id of bp.ids) {
+          if (id) savedBattlePartyUids.add(String(id));
+        }
+      }
+    }
+  }
+
   for (const m of mons) {
+    if (savedBattlePartyUids.has(m.uid)) {
+      if (!m.protect.includes('Saved battle party')) {
+        m.protect.push('Saved battle party');
+      }
+    }
+
     const aux = getAux(auxMap, m);
     const sp = m.species;
     const spNameStr = sp ? cleanSpeciesName(sp.speciesName) : `Dex #${m.dex}`;

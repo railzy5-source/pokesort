@@ -83,6 +83,27 @@ export interface RaidAssessment {
   fastLockNote?: string;
   /** A data-quality note about the moves (for example a Charged Move that was not recognised). Not a TM suggestion. */
   movesNote?: string;
+  /** Stage 4: real DPS of the specimen's current moveset (0 if unevolved or fast move unreadable). */
+  currentDps: number;
+  /** Stage 4: best attainable moveset DPS (including Elite TMs) at L40 for this specimen. */
+  bestAttainableDps: number;
+  /** Stage 4: best moveset DPS reachable with regular TMs only (no Elite TM). */
+  afterRegularTmDps: number;
+  /** Stage 4: best moveset DPS reachable with Elite TMs allowed. */
+  afterEliteTmDps: number;
+  /** Stage 4: species best moveset DPS at L40 for this specimen's ATK/bulk (denominator for Pokébattler scaling). */
+  pbMovesetDps: number;
+  /** Stage 4: true when a Fast TM improves DPS by >= tm_min_gain_pct or fixes a missing on-type Fast Attack. */
+  fastTmWorthwhile: boolean;
+  /** Stage 4: true when Fast Attack is already ready and any Charged TM is optional. */
+  chargedTmOptional: boolean;
+  /** Stage 4: true when the specimen must evolve into the target species first. */
+  evolveFirst: boolean;
+  /** Which TM slots this recommendation uses (if status === 'needs_tm'). */
+  needsFastTm?: boolean;
+  needsChargedTm?: boolean;
+  needsEliteFastTm?: boolean;
+  needsEliteChargedTm?: boolean;
 }
 
 export interface AssessArgs {
@@ -304,6 +325,22 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
     return [...replaceable].sort((a, b) => rank(a) - rank(b))[0];
   };
 
+  const fastHitCount = (fm: PrepFast) =>
+    fm.type === atype ? Math.min(regularFastPool.length || 1, Math.max(1, regularFastHits)) : 1;
+
+  // Compute species theoretical best moveset DPS at this specimen's ATK/bulk (unconstrained by lockFast / Frustration)
+  let pbMovesetDps = 0;
+  for (const fm of prepped.fasts) {
+    if (fm.type === atype) {
+      pbMovesetDps = Math.max(pbMovesetDps, atk * bulk * fastOnlyDpsPerAtk(fm, attackerTypes, atype));
+    }
+    for (const cm of prepped.chargeds) {
+      if (cm.type === atype) {
+        pbMovesetDps = Math.max(pbMovesetDps, dpsOf(fm, cm));
+      }
+    }
+  }
+
   // ---- Enumerate every (fast, charged) pair worth considering ----------------------------------------
   const plans: Plan[] = [];
   for (const [fid, fm] of fastById) {
@@ -316,7 +353,7 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
       route: fastKnown ? 'known' : fastElite ? 'elite_tm' : 'tm',
       replaces: fastKnown ? null : knownFast,
       of: regularFastPool.length || 1,
-      hit: 1,
+      hit: fastKnown ? 1 : fastElite ? 1 : fastHitCount(fm),
     };
     for (const [cid, cm] of chargedById) {
       if (cm.type !== atype) continue; // an off-type Charged Move does nothing for this team
@@ -440,6 +477,45 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
     );
   };
 
+  // Compute Stage 4 per-specimen DPS breakdown (at L40 for consistent moveset comparisons)
+  let currentDps = 0;
+  if (!evolveFirst && !unreadable && knownFast) {
+    const kfm = prepped.fasts.find((f) => up(f.moveId) === knownFast.ident);
+    if (kfm) {
+      currentDps = atk * bulk * fastOnlyDpsPerAtk(kfm, attackerTypes, atype);
+      for (const kc of knownCharged) {
+        if (kc.dead) continue;
+        const kcm = chargedById.get(kc.ident);
+        if (kcm) {
+          currentDps = Math.max(currentDps, dpsOf(kfm, kcm));
+        }
+      }
+    }
+  }
+  const nonBlockedPlans = plans.filter((p) => !p.frustrationBlocked);
+  const afterRegularTmDps = Math.max(
+    currentDps,
+    ...nonBlockedPlans.filter((p) => !p.needsElite).map((p) => p.dps),
+    0,
+  );
+  const afterEliteTmDps = Math.max(afterRegularTmDps, ...nonBlockedPlans.map((p) => p.dps), 0);
+  const bestAttainableDps = Math.max(afterEliteTmDps, pbMovesetDps);
+  const onTypeFastExistsEarly = Array.from(fastById.values()).some((f) => f.type === atype);
+  const hasOnTypeFastNow = Boolean(
+    !evolveFirst &&
+      !unreadable &&
+      knownFast &&
+      (!onTypeFastExistsEarly || fastById.get(knownFast.ident)?.type === atype),
+  );
+  const currentFastKnownPlans = plans.filter((p) => p.fast.route === 'known' && !p.frustrationBlocked);
+  const bestKeepFastDps = currentFastKnownPlans.length ? Math.max(...currentFastKnownPlans.map((p) => p.dps)) : currentDps;
+  const bestSwapFastDps = nonBlockedPlans.length ? Math.max(...nonBlockedPlans.map((p) => p.dps)) : bestKeepFastDps;
+  const fastTmWorthwhile = Boolean(
+    !evolveFirst &&
+      !lockFast &&
+      (!hasOnTypeFastNow || bestSwapFastDps >= bestKeepFastDps * (1 + tmMinGain / 100)),
+  );
+
   const finish = (
     status: RaidEntryStatus,
     blocker: RaidBlocker | null,
@@ -448,6 +524,7 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
     tmActions: string[],
     upgradeHint = '',
   ): RaidAssessment => {
+    const chargedTmOptional = Boolean(hasOnTypeFastNow && status === 'ready' && upgradeHint.startsWith('Optional:'));
     const label =
       status === 'ready'
         ? 'Ready'
@@ -480,6 +557,18 @@ export function assessRaidMon(args: AssessArgs): RaidAssessment | null {
         lockFast && knownFast
           ? `Fast move kept (${knownFast.label}): it sets this Pokémon's ${cap(mon.max_type || '')} Max Move`
           : undefined,
+      currentDps: Math.round(currentDps * 100) / 100,
+      bestAttainableDps: Math.round(bestAttainableDps * 100) / 100,
+      afterRegularTmDps: Math.round(afterRegularTmDps * 100) / 100,
+      afterEliteTmDps: Math.round(afterEliteTmDps * 100) / 100,
+      pbMovesetDps: Math.round(pbMovesetDps * 100) / 100,
+      fastTmWorthwhile,
+      chargedTmOptional,
+      evolveFirst,
+      needsFastTm: p.fast.route === 'tm',
+      needsChargedTm: p.charged.route === 'tm',
+      needsEliteFastTm: p.fast.route === 'elite_tm',
+      needsEliteChargedTm: p.charged.route === 'elite_tm',
     };
   };
 
